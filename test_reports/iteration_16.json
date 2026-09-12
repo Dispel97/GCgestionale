@@ -1,0 +1,25 @@
+{
+  "summary": "Iter16 testing complete. Backend (pytest test_iter16.py): 4/4 passed — (1) vacation overlap: creating two overlapping vacations for different users sets has_overlap=true on the second, overlap_with contains first user's name, and admin receives BOTH 'vacation_request' and 'vacation_overlap' notification kinds; (2) regular user GET /api/vacations returns only own; (3) magazzino (via /auth/admin/set-role) sees ALL vacations; (4) admin sees ALL. Frontend: admin login OK, nav-vacations label = 'Ferie' for admin (label swaps to 'Piano ferie' for magazzino by code); VacationsPage renders vacations-calendar with 30 cal-cell-{iso} cells, 13 cal-vac-{id}-{iso} pills, 5 legend-{uid} pills incl. 'In attesa' legend, cal-prev/cal-next/cal-today all functional, 2 vac-overlap-{id} badges rendered ('SOVRAPPOSTA') for the 2 overlapping test vacations. Serial-history modal: history-filter-tabs / history-filter-all / history-filter-returned all present, tab labels include counts ('Tutti · 2', 'Restituzioni · 0'), switching filters correctly and empty state shows 'Nessuna restituzione registrata'. Auto barcode photo upload: created ITER16CPE test serial, assigned to admin, opened note edit form → field-cpe-{wr}-open-dropdown enabled, clicked field-cpe-{wr}-option-{serial}, verified POST to /api/notes/{id}/photos, success toast 'Barcode di ... allegato', and photo count incremented on note (1). All cleanup complete.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter16.py",
+    "/app/test_reports/pytest/iter16.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Vacation overlap detection is O(N) per create — fine now but add compound index (user_id, from_date, to_date) if vacations grow beyond a few thousand.",
+    "AssignedSerialInput.pick() swallows all photo-upload errors silently (try/catch with empty catch) — user sees a success flow even if upload fails; consider toast.error on catch.",
+    "userColor() in App.js uses simple hash → could collide for many users; consider a curated palette with de-dup or user.color persisted server-side.",
+    "server.py now 1624 lines — auth/notes/inventory/vacations/notifications should be split into routers (repeated from iter15).",
+    "list_vacations returns full docs without pagination — will grow unbounded; add limit query param and default cap.",
+    "notification kind='vacation_overlap' currently duplicates the vacation_request event — consider merging both signals into a single notification with an overlap flag to avoid double-notify noise for admins."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter16.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin: giuseppe97belviso@gmail.com / Mucchetta4!",
+  "seed_data_creation": "Test users iter16_a_*@example.com and iter16_b_*@example.com created via /auth/register + admin approve; user_a role temporarily set to magazzino via /auth/admin/set-role. All test vacations deleted at end of tests. Test CPE serial (ITER16CPE*) and auto-uploaded barcode photo were also cleaned up.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All 4 iter16 features (overlap alert + flag, magazzino sees all vacations, auto-attach barcode photo on serial dropdown pick, per-user color-coded calendar with overlap badge and returned-tab filter) verified end-to-end. test_iter16.py can be reused as regression. Test users iter16_a_*/iter16_b_* remain in DB (user_a is now magazzino). Existing pending vacations from iter16 backend runs may still exist in DB — visible in the frontend calendar as 'IterA/IterB' pills and 'SOVRAPPOSTA' badges (helpful for manual UI verification)."
+}

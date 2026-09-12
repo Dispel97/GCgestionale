@@ -27,6 +27,14 @@ Web app che automatizza la generazione delle note tecniche OpenFiber a partire d
 - Note status espletato/sospeso (era singolo toggle)
 - File offline standalone HTML per Android
 
+### Iteration 16 (12 Feb 2026) — Ferie avanzate + Restituzioni + Barcode automatico
+- **Alert ferie sovrapposte**: `create_vacation` calcola overlap con richieste pending/approved altrui, imposta `has_overlap=true` + `overlap_with[]` sul doc, notifica admin con `kind='vacation_overlap'`.
+- **Piano ferie per magazzino**: `role=magazzino` ora vede tutte le richieste (via `GET /api/vacations`). Nav-vacations visibile per magazzino con label "Piano ferie".
+- **Calendario ferie colorato**: nuovo componente `VacationsCalendar` con vista mensile, hue stabile per user_id, celle con pill colorate (approved solide, pending dashed), navigazione prev/next/today, legenda automatica con l'associazione colore↔tecnico.
+- **Storico restituzioni**: `SerialHistoryModal` ha tab `Tutti / Restituzioni` con contatore; il filtro isola gli eventi `unassigned` con `reason=returned_to_warehouse`.
+- **Foto barcode automatica**: `AssignedSerialInput.pick()` genera e uploada la PNG barcode+QR al `POST /api/notes/{id}/photos` non appena selezioni un seriale dal menù, con toast "Barcode di X allegato".
+- **EXPORT_GITHUB.md**: nuovo documento step-by-step per usare "Save to GitHub" e clonare/deployare.
+
 ### Iteration 15 (12 Feb 2026) — Polish avanzato
 - **Dropdown vero per seriali assegnati** (non più `<datalist>`): pulsante `open-dropdown` apre menù cliccabile con chip per tag e nome tecnico, click su una voce compila il campo.
 - **Dati privati estratti automaticamente dal PDF** (telefono cliente, ID SERVIZIO `AAA\d{4,}`, ID RISORSA, password apparato) e mostrati **in cima alla nota espansa** (`private-data-{wr}`) con click-to-copy e link `tel:` sul telefono.

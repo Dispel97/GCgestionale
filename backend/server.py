@@ -1372,6 +1372,15 @@ async def create_vacation(req: VacationRequestCreate, user: dict = Depends(get_c
     if req.from_date > req.to_date:
         raise HTTPException(status_code=400, detail="Data inizio dopo data fine")
     now_iso = datetime.now(timezone.utc).isoformat()
+    # Detect overlaps with other users' pending/approved vacations
+    overlaps = []
+    async for v in db.vacations.find({
+        "user_id": {"$ne": user["id"]},
+        "status": {"$in": ["pending", "approved"]},
+        "from_date": {"$lte": req.to_date},
+        "to_date": {"$gte": req.from_date},
+    }):
+        overlaps.append({"user_name": v.get("user_name", ""), "from": v["from_date"], "to": v["to_date"], "status": v["status"]})
     doc = {
         "id": str(uuid.uuid4()),
         "user_id": user["id"],
@@ -1384,6 +1393,8 @@ async def create_vacation(req: VacationRequestCreate, user: dict = Depends(get_c
         "admin_note": "",
         "decided_by": "",
         "decided_at": "",
+        "has_overlap": len(overlaps) > 0,
+        "overlap_with": overlaps,
         "created_at": now_iso,
     }
     await db.vacations.insert_one(dict(doc))
@@ -1397,19 +1408,33 @@ async def create_vacation(req: VacationRequestCreate, user: dict = Depends(get_c
             "kind": "vacation_request",
             "message": f"🏖️ {from_who} ha richiesto ferie dal {req.from_date} al {req.to_date}",
             "from_user_name": from_who,
-            "note_id": doc["id"],  # store vacation id here for click-through
+            "note_id": doc["id"],
             "note_wr": "",
             "serials": [],
             "read": False,
             "created_at": now_iso,
         })
+        if overlaps:
+            names = ", ".join(o["user_name"] for o in overlaps[:3])
+            await db.notifications.insert_one({
+                "id": str(uuid.uuid4()),
+                "user_id": a["id"],
+                "kind": "vacation_overlap",
+                "message": f"⚠️ Ferie sovrapposte: {from_who} coincide con {names}",
+                "from_user_name": from_who,
+                "note_id": doc["id"],
+                "note_wr": "",
+                "serials": [],
+                "read": False,
+                "created_at": now_iso,
+            })
     return doc
 
 
 @api_router.get("/vacations")
 async def list_vacations(user: dict = Depends(get_current_user)):
-    if user.get("role") == "admin":
-        docs = await db.vacations.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    if user.get("role") in ("admin", "magazzino"):
+        docs = await db.vacations.find({}, {"_id": 0}).sort("created_at", -1).to_list(2000)
     else:
         docs = await db.vacations.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(1000)
     return docs

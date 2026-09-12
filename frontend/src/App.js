@@ -202,11 +202,13 @@ function Header({ onAdmin, showAdminBtn, page, onPageChange, canSwitchPage }) {
             </div>
             {canSwitchPage && (
               <div className="ml-auto flex gap-1 bg-slate-100 rounded-full p-1 flex-wrap" data-testid="page-switcher">
+                {user.role !== "magazzino" && (
                 <button onClick={() => onPageChange("notes")}
                   className={`px-3 py-1 rounded-full text-xs font-semibold inline-flex items-center gap-1 transition ${page === "notes" ? "bg-white text-slate-900 shadow" : "text-slate-500 hover:text-slate-800"}`}
                   data-testid="nav-notes">
                   <FileText size={12} /> Note
                 </button>
+                )}
                 <button onClick={() => onPageChange("warehouse")}
                   className={`px-3 py-1 rounded-full text-xs font-semibold inline-flex items-center gap-1 transition ${page === "warehouse" ? "bg-white text-slate-900 shadow" : "text-slate-500 hover:text-slate-800"}`}
                   data-testid="nav-warehouse">
@@ -215,7 +217,7 @@ function Header({ onAdmin, showAdminBtn, page, onPageChange, canSwitchPage }) {
                 <button onClick={() => onPageChange("vacations")}
                   className={`px-3 py-1 rounded-full text-xs font-semibold inline-flex items-center gap-1 transition ${page === "vacations" ? "bg-white text-slate-900 shadow" : "text-slate-500 hover:text-slate-800"}`}
                   data-testid="nav-vacations">
-                  <Calendar size={12} /> Ferie
+                  <Calendar size={12} /> {user.role === "magazzino" ? "Piano ferie" : "Ferie"}
                 </button>
                 {user.role === "admin" && (
                   <button onClick={() => onPageChange("dashboard")}
@@ -598,11 +600,12 @@ function PdfUploader({ onParsed }) {
 
 // ---------- Photo Manager (with camera capture) ----------
 // ---------- Assigned Serial Input (dropdown a tendina + barcode preview) ----------
-function AssignedSerialInput({ value, onChange, tipoHint, placeholder, testId }) {
+function AssignedSerialInput({ value, onChange, tipoHint, placeholder, testId, noteId, onPhotoAttached }) {
   const [assigned, setAssigned] = useState([]);
   const [showBarcode, setShowBarcode] = useState(false);
   const [imgUrl, setImgUrl] = useState(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [attaching, setAttaching] = useState(false);
 
   useEffect(() => {
     axios.get(`${API}/inventory/my-assigned`, { params: tipoHint ? { tipo: tipoHint } : {} })
@@ -626,7 +629,23 @@ function AssignedSerialInput({ value, onChange, tipoHint, placeholder, testId })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value, showBarcode]);
 
-  const pick = (serial) => { onChange(serial); setMenuOpen(false); };
+  const pick = async (serial) => {
+    onChange(serial);
+    setMenuOpen(false);
+    if (noteId && serial) {
+      try {
+        setAttaching(true);
+        const blob = await generateSerialImage(serial, tipoHint || "");
+        const file = new File([blob], `barcode_${tipoHint || 'seriale'}_${serial}.png`, { type: "image/png" });
+        const fd = new FormData();
+        fd.append("files", file);
+        await axios.post(`${API}/notes/${noteId}/photos`, fd, { headers: { "Content-Type": "multipart/form-data" } });
+        toast.success(`Barcode di ${serial} allegato`);
+        onPhotoAttached?.();
+      } catch (_) { /* silent — user can still toggle manually */ }
+      finally { setAttaching(false); }
+    }
+  };
 
   return (
     <div>
@@ -678,7 +697,7 @@ function AssignedSerialInput({ value, onChange, tipoHint, placeholder, testId })
         </>
       )}
       {assigned.length > 0 && !menuOpen && (
-        <div className="text-[10px] text-slate-400 mt-0.5">📦 {assigned.length} disponibili — apri il menù</div>
+        <div className="text-[10px] text-slate-400 mt-0.5">📦 {assigned.length} disponibili — apri il menù{attaching ? " · allego barcode…" : ""}</div>
       )}
       {showBarcode && imgUrl && (
         <div className="mt-2 rounded-lg border border-pink-200 bg-white p-2" data-testid={`${testId}-barcode-preview`}>
@@ -1107,13 +1126,13 @@ function NoteCard({ note, onChanged, defaultOpen, selected, onToggleSelect, onOp
                 ))}
                 <label className="text-xs font-medium text-slate-600 sm:col-span-2" onFocus={() => setLastField("cpe")}>
                   CPE (seriale modem)
-                  <AssignedSerialInput value={form.cpe} tipoHint="CPE"
+                  <AssignedSerialInput value={form.cpe} tipoHint="CPE" noteId={note.id} onPhotoAttached={onChanged}
                     onChange={(v) => { setForm({ ...form, cpe: v }); setNoteDirty(false); setLastField("cpe"); }}
                     placeholder="Seleziona da assegnati o digita…" testId={`field-cpe-${note.wr}`} />
                 </label>
                 <label className="text-xs font-medium text-slate-600 sm:col-span-2" onFocus={() => setLastField("ont_sfp")}>
                   ONT / SFP
-                  <AssignedSerialInput value={form.ont_sfp} tipoHint="ONT"
+                  <AssignedSerialInput value={form.ont_sfp} tipoHint="ONT" noteId={note.id} onPhotoAttached={onChanged}
                     onChange={(v) => { setForm({ ...form, ont_sfp: v }); setNoteDirty(false); setLastField("ont_sfp"); }}
                     placeholder="Seleziona da assegnati o digita…" testId={`field-ont_sfp-${note.wr}`} />
                 </label>
@@ -1135,7 +1154,7 @@ function NoteCard({ note, onChanged, defaultOpen, selected, onToggleSelect, onOp
                       <input type="text" placeholder="Tipo (es. EXT)" value={m.tipo || ""}
                         onChange={(e) => { const arr = [...(form.materials || [])]; arr[i] = { ...arr[i], tipo: e.target.value }; setForm({ ...form, materials: arr }); setNoteDirty(false); }}
                         className="rounded-lg border border-slate-200 px-2 py-2 text-xs font-semibold" />
-                      <AssignedSerialInput value={m.serial} tipoHint={m.tipo}
+                      <AssignedSerialInput value={m.serial} tipoHint={m.tipo} noteId={note.id} onPhotoAttached={onChanged}
                         onChange={(v) => { const arr = [...(form.materials || [])]; arr[i] = { ...arr[i], serial: v }; setForm({ ...form, materials: arr }); setNoteDirty(false); }}
                         placeholder="Seriale" testId={`material-serial-${note.wr}-${i}`} />
                       <button type="button" onClick={() => { const arr = [...(form.materials || [])]; arr.splice(i, 1); setForm({ ...form, materials: arr }); setNoteDirty(false); }}
@@ -1504,6 +1523,7 @@ function NotificationsBell() {
 function SerialHistoryModal({ serialItem, onClose }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState("all");  // all | returned
   useEffect(() => {
     (async () => {
       try { const r = await axios.get(`${API}/inventory/serials/${serialItem.id}/history`); setData(r.data); }
@@ -1512,7 +1532,10 @@ function SerialHistoryModal({ serialItem, onClose }) {
     })();
   }, [serialItem.id]);
 
+  const isReturn = (e) => e.event_type === "unassigned" && e.extra?.reason === "returned_to_warehouse";
+
   const labelForEvent = (e) => {
+    if (isReturn(e)) return { icon: <RotateCcw size={14} />, color: "bg-amber-100 text-amber-800", title: `Restituito da ${e.extra?.from_user_name || "tecnico"}` };
     switch (e.event_type) {
       case "created": return { icon: <Package size={14} />, color: "bg-emerald-100 text-emerald-800", title: e.extra?.auto_from_sync ? "Ingresso automatico (da sync nota)" : "Ingresso in magazzino" };
       case "assigned": return { icon: <UserCheck size={14} />, color: "bg-amber-100 text-amber-800", title: `Assegnato a ${e.extra?.to_user_name || "utente"}` };
@@ -1523,6 +1546,9 @@ function SerialHistoryModal({ serialItem, onClose }) {
       default: return { icon: <History size={14} />, color: "bg-slate-100 text-slate-700", title: e.event_type };
     }
   };
+
+  const events = (data?.events || []).filter((e) => filter === "all" || (filter === "returned" && isReturn(e)));
+  const returnedCount = (data?.events || []).filter(isReturn).length;
 
   return (
     <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-start sm:items-center justify-center p-3 overflow-y-auto" onClick={onClose} data-testid="serial-history-modal">
@@ -1536,13 +1562,19 @@ function SerialHistoryModal({ serialItem, onClose }) {
           <button onClick={onClose} className="ml-auto btn-ghost rounded-full p-1.5 hover:bg-slate-100" data-testid="close-history"><X size={18} /></button>
         </div>
         <div className="p-5">
+          <div className="flex gap-1 bg-slate-100 rounded-full p-1 mb-4 w-fit" data-testid="history-filter-tabs">
+            <button onClick={() => setFilter("all")} className={`px-3 py-1 rounded-full text-xs font-semibold transition ${filter === "all" ? "bg-white text-slate-900 shadow" : "text-slate-500 hover:text-slate-800"}`} data-testid="history-filter-all">Tutti · {data?.events?.length || 0}</button>
+            <button onClick={() => setFilter("returned")} className={`px-3 py-1 rounded-full text-xs font-semibold transition inline-flex items-center gap-1 ${filter === "returned" ? "bg-white text-amber-700 shadow" : "text-slate-500 hover:text-slate-800"}`} data-testid="history-filter-returned">
+              <RotateCcw size={12} /> Restituzioni · {returnedCount}
+            </button>
+          </div>
           {loading ? (
             <div className="flex items-center gap-2 text-slate-500 text-sm"><Loader2 className="animate-spin" size={16} /> Caricamento…</div>
-          ) : !data?.events?.length ? (
-            <div className="text-sm text-slate-400 text-center p-6">Nessun evento registrato</div>
+          ) : !events.length ? (
+            <div className="text-sm text-slate-400 text-center p-6">{filter === "returned" ? "Nessuna restituzione registrata" : "Nessun evento registrato"}</div>
           ) : (
             <ol className="relative border-l-2 border-slate-200 ml-2 space-y-4" data-testid="serial-timeline">
-              {data.events.map((ev, i) => {
+              {events.map((ev, i) => {
                 const { icon, color, title } = labelForEvent(ev);
                 return (
                   <li key={ev.id} className="ml-4">
@@ -1969,9 +2001,124 @@ function WarehousePage({ onOpenAdmin, showAdminBtn }) {
 }
 
 // ---------- Vacations Page (ferie) ----------
+// Hash helper: derive a stable hue per user_id for color-coded calendar
+const userColor = (uid) => {
+  if (!uid) return { bg: "#e2e8f0", fg: "#475569" };
+  let h = 0;
+  for (let i = 0; i < uid.length; i++) h = (h * 31 + uid.charCodeAt(i)) & 0xffffffff;
+  const hue = Math.abs(h) % 360;
+  return { bg: `hsl(${hue}, 70%, 60%)`, fg: "#ffffff", light: `hsl(${hue}, 90%, 92%)`, dark: `hsl(${hue}, 60%, 30%)` };
+};
+
+function VacationsCalendar({ items }) {
+  const [ym, setYm] = useState(() => {
+    const n = new Date(); return { y: n.getFullYear(), m: n.getMonth() };
+  });
+  const { y, m } = ym;
+  const first = new Date(y, m, 1);
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  const startWeekday = (first.getDay() + 6) % 7; // Monday = 0
+  const cells = [];
+  for (let i = 0; i < startWeekday; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(new Date(y, m, d));
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  const isoOf = (date) => {
+    const dd = String(date.getDate()).padStart(2, "0");
+    const mm = String(date.getMonth() + 1).padStart(2, "0");
+    return `${date.getFullYear()}-${mm}-${dd}`;
+  };
+  const vacsOn = (date) => {
+    const iso = isoOf(date);
+    return items.filter((v) => v.from_date <= iso && iso <= v.to_date && v.status !== "rejected");
+  };
+
+  // Distinct users for legend
+  const legendMap = new Map();
+  items.forEach((v) => { if (!legendMap.has(v.user_id)) legendMap.set(v.user_id, v.user_name || v.user_email); });
+  const legend = Array.from(legendMap.entries());
+
+  const monthName = new Date(y, m, 1).toLocaleString("it-IT", { month: "long", year: "numeric" });
+  const prev = () => { const d = new Date(y, m - 1, 1); setYm({ y: d.getFullYear(), m: d.getMonth() }); };
+  const next = () => { const d = new Date(y, m + 1, 1); setYm({ y: d.getFullYear(), m: d.getMonth() }); };
+  const today = () => { const n = new Date(); setYm({ y: n.getFullYear(), m: n.getMonth() }); };
+  const todayIso = isoOf(new Date());
+
+  return (
+    <section className="bg-white border border-slate-200 rounded-2xl card-shadow p-4 sm:p-5" data-testid="vacations-calendar">
+      <div className="flex items-center justify-between gap-2 flex-wrap mb-3">
+        <div>
+          <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Calendario</div>
+          <h2 className="text-lg font-display font-bold capitalize">{monthName}</h2>
+        </div>
+        <div className="flex items-center gap-1">
+          <button onClick={prev} className="rounded-full px-3 py-1 text-xs font-semibold bg-slate-100 hover:bg-slate-200" data-testid="cal-prev">‹</button>
+          <button onClick={today} className="rounded-full px-3 py-1 text-xs font-semibold bg-slate-100 hover:bg-slate-200" data-testid="cal-today">Oggi</button>
+          <button onClick={next} className="rounded-full px-3 py-1 text-xs font-semibold bg-slate-100 hover:bg-slate-200" data-testid="cal-next">›</button>
+        </div>
+      </div>
+      <div className="grid grid-cols-7 gap-1 text-[10px] font-semibold text-slate-500 mb-1">
+        {["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"].map((d) => <div key={d} className="text-center py-1">{d}</div>)}
+      </div>
+      <div className="grid grid-cols-7 gap-1">
+        {cells.map((c, i) => {
+          if (!c) return <div key={`e${i}`} className="h-16 sm:h-20" />;
+          const iso = isoOf(c);
+          const vacs = vacsOn(c);
+          const isToday = iso === todayIso;
+          const isSat = c.getDay() === 6;
+          const isSun = c.getDay() === 0;
+          return (
+            <div key={iso} className={`h-16 sm:h-20 rounded-lg border p-1 relative overflow-hidden ${isToday ? "border-brand-pink ring-1 ring-brand-pink" : "border-slate-200"} ${isSat || isSun ? "bg-slate-50" : "bg-white"}`}
+              data-testid={`cal-cell-${iso}`}>
+              <div className={`text-[10px] font-bold ${isToday ? "text-brand-pink" : "text-slate-500"}`}>{c.getDate()}</div>
+              <div className="mt-0.5 space-y-0.5">
+                {vacs.slice(0, 3).map((v) => {
+                  const col = userColor(v.user_id);
+                  return (
+                    <div key={v.id} title={`${v.user_name} · ${v.from_date}→${v.to_date}${v.status === "pending" ? " (in attesa)" : ""}`}
+                      className="truncate text-[9px] font-semibold px-1 py-0.5 rounded"
+                      style={{ background: v.status === "pending" ? col.light : col.bg, color: v.status === "pending" ? col.dark : col.fg, border: v.status === "pending" ? `1px dashed ${col.bg}` : "none" }}
+                      data-testid={`cal-vac-${v.id}-${iso}`}>
+                      {v.user_name}
+                    </div>
+                  );
+                })}
+                {vacs.length > 3 && <div className="text-[9px] text-slate-500">+{vacs.length - 3}</div>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {legend.length > 0 && (
+        <div className="mt-3 pt-3 border-t border-slate-100">
+          <div className="text-[11px] font-semibold text-slate-500 uppercase mb-2">Legenda</div>
+          <div className="flex flex-wrap gap-2">
+            {legend.map(([uid, name]) => {
+              const col = userColor(uid);
+              return (
+                <div key={uid} className="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-full" style={{ background: col.light, color: col.dark }} data-testid={`legend-${uid}`}>
+                  <span className="w-3 h-3 rounded-full" style={{ background: col.bg }} />
+                  {name}
+                </div>
+              );
+            })}
+            <div className="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-600">
+              <span className="w-3 h-3 rounded-full border-2 border-dashed border-slate-400" /> In attesa
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function VacationsPage() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
+  const canView = isAdmin || user?.role === "magazzino";  // magazzino can see full plan
+  const isMagazzino = user?.role === "magazzino";
   const [list, setList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [from, setFrom] = useState("");
@@ -2016,7 +2163,7 @@ function VacationsPage() {
 
   return (
     <main className="max-w-4xl mx-auto px-4 sm:px-6 py-6 sm:py-10 space-y-6" data-testid="vacations-page">
-      {!isAdmin && (
+      {!isAdmin && !isMagazzino && (
         <section className="bg-white border border-slate-200 rounded-2xl card-shadow p-4 sm:p-5">
           <div className="flex items-center gap-2 mb-3">
             <Calendar size={18} className="brand-pink" />
@@ -2046,10 +2193,12 @@ function VacationsPage() {
         </section>
       )}
 
+      {canView && list.length > 0 && <VacationsCalendar items={list} />}
+
       <section className="bg-white border border-slate-200 rounded-2xl card-shadow p-4 sm:p-5">
         <div className="flex items-center gap-2 mb-3">
           <Calendar size={16} />
-          <h2 className="text-base font-display font-bold">{isAdmin ? "Tutte le richieste ferie" : "Le tue richieste"}</h2>
+          <h2 className="text-base font-display font-bold">{canView ? "Tutte le richieste ferie" : "Le tue richieste"}</h2>
           <span className="ml-auto text-xs text-slate-500">{list.length}</span>
         </div>
         {loading ? (
@@ -2064,7 +2213,8 @@ function VacationsPage() {
                   <div className="text-sm font-semibold text-slate-900 flex items-center gap-2 flex-wrap">
                     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-bold ${badgeColor(v.status)}`}>{badgeLabel(v.status)}</span>
                     <span>{v.from_date} → {v.to_date}</span>
-                    {isAdmin && <span className="text-xs text-slate-500 font-normal">· {v.user_name || v.user_email}</span>}
+                    {v.has_overlap && <span className="text-[10px] font-bold text-red-700 bg-red-100 px-1.5 py-0.5 rounded animate-pulse" title="Sovrapposizione con altre ferie" data-testid={`vac-overlap-${v.id}`}>⚠️ SOVRAPPOSTA</span>}
+                    {canView && <span className="text-xs text-slate-500 font-normal">· {v.user_name || v.user_email}</span>}
                   </div>
                   {v.reason && <div className="text-xs text-slate-600 mt-0.5">💬 {v.reason}</div>}
                   {v.admin_note && <div className="text-[11px] text-slate-500 mt-0.5">Nota admin: {v.admin_note}</div>}
@@ -2245,8 +2395,8 @@ function AppContent() {
     closeScanner();
   };
 
-  const canSwitchPage = user?.role === "admin" || user?.role === "user";
-  const effectivePage = user?.role === "magazzino" ? "warehouse" : (canSwitchPage ? page : "notes");
+  const canSwitchPage = user?.role === "admin" || user?.role === "user" || user?.role === "magazzino";
+  const effectivePage = canSwitchPage ? (page || (user?.role === "magazzino" ? "warehouse" : "notes")) : "notes";
 
   return (
     <div className="min-h-screen">
