@@ -14,6 +14,15 @@ Web app che automatizza la generazione delle note tecniche OpenFiber a partire d
 - **Storage**: Emergent Object Storage (PDF + foto).
 - **Offline**: `standalone_offline.html` 2.5MB con librerie inlinate (usato su Android).
 
+## Implemented (as of 12 Feb 2026)
+
+### Iteration 17 (12 Feb 2026) — Fix dropdown seriali + Super-admin & multi-admin
+- **Fix dropdown seriali → nota**: quando selezioni un seriale dal menù a tendina viene ora **salvato immediatamente sul server** (`PATCH /notes/{id}` con il campo target) PRIMA del refetch, così la nota viene rigenerata con il nuovo seriale. Prima il refetch sovrascriveva la selezione locale con lo stato server "vecchio".
+- **Nessun vincolo di tipo**: `GET /inventory/my-assigned` ignora ora il parametro `tipo` — qualsiasi seriale assegnato può essere selezionato in qualsiasi campo (CPE, ONT o extra). Utile quando il magazzino dà un CPEWIFI da usare come ONT o come extra. Nel dropdown i seriali con tipo coincidente all'hint restano in cima con badge verde, gli altri seguono con badge rosa.
+- **Multi-admin**: nuovo endpoint `POST /api/auth/admin/promote/{user_id}` — qualsiasi admin può promuovere un utente a admin (stessi poteri). Nuovo endpoint `POST /api/auth/admin/demote/{user_id}` — **solo il super-admin (ADMIN_EMAIL = giuseppe97belviso@gmail.com)** può declassare un altro admin a `user` o `magazzino`. Il super-admin non può essere declassato da nessuno.
+- **`/auth/me` e `/auth/login`** ora ritornano `is_super_admin: bool`. AdminPanel: nuovi pulsanti `promote-admin-{email}` (visibile a tutti gli admin, sui non-admin) e `demote-admin-{email}` (visibile SOLO al super-admin, sugli altri admin).
+- **Dati di lavoro completi + copia singola**: la sezione "Dati di lavoro" nella nota mostra ora ogni campo (Telefono cliente, ID SERVIZIO, ID RISORSA, Password) in card bianche 2-col, con testo **completamente visibile** (`break-all`, `select-all`), tap sul valore o sul pulsante "Copia" per copiare, `tel:` link sul telefono che copia+chiama.
+
 ## Implemented (as of 11 Feb 2026)
 ### Core (prior iterations)
 - OpenFiber PDF parsing (WR, cliente, OLO, splitter, via, PFS, PTE, etc.)

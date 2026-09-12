@@ -555,17 +555,21 @@ async def login(req: LoginRequest):
     if not user.get("is_approved") and user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Account in attesa di approvazione dell'amministratore")
     token = create_access_token(user["id"], user["email"], user.get("role", "user"))
+    is_super_admin = (user["email"].lower() == ADMIN_EMAIL) and user.get("role") == "admin"
     return {
         "access_token": token, "token_type": "bearer",
         "user": {"id": user["id"], "email": user["email"], "name": user.get("name", ""),
-                 "role": user.get("role", "user"), "is_approved": user.get("is_approved", False)},
+                 "role": user.get("role", "user"), "is_approved": user.get("is_approved", False),
+                 "is_super_admin": is_super_admin},
     }
 
 
 @api_router.get("/auth/me")
 async def me(user: dict = Depends(get_current_user)):
+    is_super_admin = (user.get("email", "").lower() == ADMIN_EMAIL) and user.get("role") == "admin"
     return {"id": user["id"], "email": user["email"], "name": user.get("name", ""),
-            "role": user.get("role", "user"), "is_approved": user.get("is_approved", False)}
+            "role": user.get("role", "user"), "is_approved": user.get("is_approved", False),
+            "is_super_admin": is_super_admin}
 
 
 @api_router.get("/auth/admin/users")
@@ -625,6 +629,38 @@ async def admin_delete_user(user_id: str, admin: dict = Depends(get_current_admi
     # Cascade delete notes owned
     await db.notes.delete_many({"user_id": user_id})
     return {"deleted": True}
+
+
+@api_router.post("/auth/admin/promote/{user_id}")
+async def admin_promote(user_id: str, admin: dict = Depends(get_current_admin)):
+    """Promuove un utente a ruolo admin. Chiunque sia admin può farlo."""
+    target = await db.users.find_one({"id": user_id})
+    if not target:
+        raise HTTPException(status_code=404, detail="Utente non trovato")
+    if target.get("role") == "admin":
+        raise HTTPException(status_code=400, detail="L'utente è già admin")
+    await db.users.update_one({"id": user_id}, {"$set": {"role": "admin", "is_approved": True}})
+    return {"promoted": True, "id": user_id}
+
+
+@api_router.post("/auth/admin/demote/{user_id}")
+async def admin_demote(user_id: str, body: Optional[ApproveRequest] = None,
+                       admin: dict = Depends(get_current_admin)):
+    """Declassa un admin. Solo il super-admin (ADMIN_EMAIL) può farlo. Il super-admin stesso non può essere declassato."""
+    if admin.get("email", "").lower() != ADMIN_EMAIL:
+        raise HTTPException(status_code=403, detail="Solo il super-admin può declassare altri admin")
+    target = await db.users.find_one({"id": user_id})
+    if not target:
+        raise HTTPException(status_code=404, detail="Utente non trovato")
+    if target.get("email", "").lower() == ADMIN_EMAIL:
+        raise HTTPException(status_code=400, detail="Il super-admin non può essere declassato")
+    if target.get("role") != "admin":
+        raise HTTPException(status_code=400, detail="L'utente non è admin")
+    new_role = (body.role if body else "user") or "user"
+    if new_role not in ("user", "magazzino"):
+        raise HTTPException(status_code=400, detail="Ruolo non valido")
+    await db.users.update_one({"id": user_id}, {"$set": {"role": new_role}})
+    return {"demoted": True, "id": user_id, "role": new_role}
 
 
 # ---------- Note Routes ----------
@@ -1313,7 +1349,9 @@ async def delete_tag(req: DeleteTagRequest, user: dict = Depends(get_magazzino_o
 # ---------- Warehouse: materiali assegnati all'utente corrente (per dropdown in nota) ----------
 @api_router.get("/inventory/my-assigned")
 async def my_assigned(tipo: str = Query(""), user: dict = Depends(get_current_user)):
-    """Ritorna i seriali assegnati a me o al mio partner di squadra oggi, che non sono ancora scaricati."""
+    """Ritorna TUTTI i seriali assegnati a me o al mio partner di squadra oggi (non scaricati).
+    Il parametro `tipo` è ignorato: qualsiasi seriale assegnato può essere selezionato in qualsiasi
+    campo (CPE, ONT o extra) — il magazzino può darti un CPEWIFI e tu lo usi dove serve."""
     today_iso = datetime.now(timezone.utc).date().isoformat()
     partners = await _get_team_partners(user["id"], today_iso)
     user_ids = [user["id"]] + partners
@@ -1321,8 +1359,6 @@ async def my_assigned(tipo: str = Query(""), user: dict = Depends(get_current_us
         "assigned_to_user_id": {"$in": user_ids},
         "status": {"$ne": "scaricato"},
     }
-    if tipo:
-        q["tipo"] = tipo
     docs = await db.serials.find(q, {"_id": 0}).sort("assigned_to_name", 1).to_list(500)
     return docs
 

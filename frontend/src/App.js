@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef, createContext, useContext } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo, createContext, useContext } from "react";
 import axios from "axios";
 import { Toaster, toast } from "sonner";
 import {
@@ -329,6 +329,7 @@ function AuthScreen() {
 
 // ---------- Admin Panel ----------
 function AdminPanel({ onClose }) {
+  const { user: currentUser } = useAuth();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(false);
 
@@ -346,9 +347,22 @@ function AdminPanel({ onClose }) {
     if (!window.confirm(`Eliminare definitivamente ${email} e tutte le sue note?`)) return;
     try { await axios.delete(`${API}/auth/admin/users/${id}`); toast.success("Utente eliminato"); fetchUsers(); } catch (e) { toast.error(errorText(e)); }
   };
+  const promote = async (id, email) => {
+    if (!window.confirm(`Promuovere ${email} ad ADMIN? Avrà tutti i poteri di amministrazione.`)) return;
+    try { await axios.post(`${API}/auth/admin/promote/${id}`); toast.success(`${email} è ora ADMIN`); fetchUsers(); } catch (e) { toast.error(errorText(e)); }
+  };
+  const demote = async (id, email) => {
+    const choice = window.prompt(`Declassare ${email} — inserisci il nuovo ruolo:\n\n"user"  → Tecnico\n"magazzino"  → Magazzino`, "user");
+    if (!choice) return;
+    const role = choice.trim().toLowerCase();
+    if (!["user", "magazzino"].includes(role)) { toast.error("Ruolo non valido (usa 'user' o 'magazzino')"); return; }
+    try { await axios.post(`${API}/auth/admin/demote/${id}`, { role }); toast.success(`${email} declassato a ${role === "magazzino" ? "Magazzino" : "Tecnico"}`); fetchUsers(); } catch (e) { toast.error(errorText(e)); }
+  };
 
   const pending = users.filter((u) => !u.is_approved && u.role !== "admin");
   const approved = users.filter((u) => u.is_approved || u.role === "admin");
+  const isSuperAdmin = !!currentUser?.is_super_admin;
+  const superAdminEmail = (currentUser?.is_super_admin ? currentUser.email : "").toLowerCase();
 
   return (
     <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-start sm:items-center justify-center p-3 overflow-y-auto" onClick={onClose} data-testid="admin-modal">
@@ -383,12 +397,15 @@ function AdminPanel({ onClose }) {
           <section data-testid="approved-section">
             <h3 className="text-sm font-semibold text-slate-900 mb-2">Utenti attivi ({approved.length})</h3>
             <div className="space-y-2">
-              {approved.map((u) => (
-                <div key={u.id} className="border border-slate-200 rounded-xl p-3 flex items-center gap-3 flex-wrap">
+              {approved.map((u) => {
+                const isSelf = currentUser?.id === u.id;
+                const isTargetSuperAdmin = u.email && superAdminEmail && u.email.toLowerCase() === superAdminEmail;
+                return (
+                <div key={u.id} className="border border-slate-200 rounded-xl p-3 flex items-center gap-3 flex-wrap" data-testid={`approved-${u.email}`}>
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-semibold text-slate-900 truncate">
                       {u.email}{" "}
-                      {u.role === "admin" && <span className="ml-1 text-[10px] font-bold text-brand-pink brand-pink">ADMIN</span>}
+                      {u.role === "admin" && <span className="ml-1 text-[10px] font-bold text-brand-pink brand-pink">ADMIN{isTargetSuperAdmin ? " ★" : ""}</span>}
                       {u.role === "magazzino" && <span className="ml-1 text-[10px] font-bold text-slate-800 bg-slate-100 px-1.5 py-0.5 rounded">MAGAZZINO</span>}
                       {u.role === "user" && <span className="ml-1 text-[10px] font-bold text-slate-500">TECNICO</span>}
                     </div>
@@ -402,12 +419,28 @@ function AdminPanel({ onClose }) {
                         <option value="user">Tecnico</option>
                         <option value="magazzino">Magazzino</option>
                       </select>
+                      <button onClick={() => promote(u.id, u.email)}
+                        className="rounded-full px-3 py-1.5 text-xs font-semibold bg-brand-pink/10 text-brand-pink brand-pink hover:bg-brand-pink/20 inline-flex items-center gap-1"
+                        data-testid={`promote-admin-${u.email}`} title="Promuovi ad Admin">
+                        <Shield size={12} /> Promuovi Admin
+                      </button>
                       <button onClick={() => revoke(u.id)} className="btn-ghost rounded-full px-3 py-1.5 text-xs font-semibold bg-slate-100 hover:bg-slate-200 inline-flex items-center gap-1"><UserX size={12} /> Sospendi</button>
                       <button onClick={() => del(u.id, u.email)} className="btn-ghost rounded-full px-3 py-1.5 text-xs font-semibold bg-red-50 text-red-600 hover:bg-red-100 inline-flex items-center gap-1"><Trash2 size={12} /> Elimina</button>
                     </>
                   )}
+                  {u.role === "admin" && isSuperAdmin && !isTargetSuperAdmin && !isSelf && (
+                    <button onClick={() => demote(u.id, u.email)}
+                      className="rounded-full px-3 py-1.5 text-xs font-semibold bg-amber-100 text-amber-800 hover:bg-amber-200 inline-flex items-center gap-1"
+                      data-testid={`demote-admin-${u.email}`} title="Declassa questo admin">
+                      <UserX size={12} /> Declassa
+                    </button>
+                  )}
+                  {u.role === "admin" && isTargetSuperAdmin && (
+                    <span className="text-[10px] italic text-slate-400" title="Il super-admin non può essere declassato">super-admin</span>
+                  )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           </section>
         </div>
@@ -600,7 +633,7 @@ function PdfUploader({ onParsed }) {
 
 // ---------- Photo Manager (with camera capture) ----------
 // ---------- Assigned Serial Input (dropdown a tendina + barcode preview) ----------
-function AssignedSerialInput({ value, onChange, tipoHint, placeholder, testId, noteId, onPhotoAttached }) {
+function AssignedSerialInput({ value, onChange, tipoHint, placeholder, testId, noteId, onPhotoAttached, onPersist }) {
   const [assigned, setAssigned] = useState([]);
   const [showBarcode, setShowBarcode] = useState(false);
   const [imgUrl, setImgUrl] = useState(null);
@@ -608,10 +641,24 @@ function AssignedSerialInput({ value, onChange, tipoHint, placeholder, testId, n
   const [attaching, setAttaching] = useState(false);
 
   useEffect(() => {
-    axios.get(`${API}/inventory/my-assigned`, { params: tipoHint ? { tipo: tipoHint } : {} })
+    // Nessun filtro per tipo: mostriamo TUTTI i seriali assegnati alla squadra
+    // (il magazzino può darti un CPEWIFI da usare in CPE, ONT o extra)
+    axios.get(`${API}/inventory/my-assigned`)
       .then((r) => setAssigned(r.data || []))
       .catch(() => setAssigned([]));
-  }, [tipoHint]);
+  }, []);
+
+  // Ordina: prima i seriali con tipo corrispondente all'hint, poi gli altri
+  const sortedAssigned = useMemo(() => {
+    if (!tipoHint) return assigned;
+    const norm = (s) => (s || "").toString().toUpperCase();
+    const hint = norm(tipoHint);
+    return [...assigned].sort((a, b) => {
+      const am = norm(a.tipo).includes(hint) ? 0 : 1;
+      const bm = norm(b.tipo).includes(hint) ? 0 : 1;
+      return am - bm;
+    });
+  }, [assigned, tipoHint]);
 
   useEffect(() => {
     let cancelled = false;
@@ -632,19 +679,25 @@ function AssignedSerialInput({ value, onChange, tipoHint, placeholder, testId, n
   const pick = async (serial) => {
     onChange(serial);
     setMenuOpen(false);
-    if (noteId && serial) {
+    if (!noteId || !serial) return;
+    try {
+      setAttaching(true);
+      // 1) Persisti il campo sul server PRIMA di refetch (altrimenti il refetch sovrascriverebbe con il vecchio valore)
+      if (onPersist) {
+        try { await onPersist(serial); } catch (_) { /* silent */ }
+      }
+      // 2) Genera e allega la foto barcode
       try {
-        setAttaching(true);
         const blob = await generateSerialImage(serial, tipoHint || "");
         const file = new File([blob], `barcode_${tipoHint || 'seriale'}_${serial}.png`, { type: "image/png" });
         const fd = new FormData();
         fd.append("files", file);
         await axios.post(`${API}/notes/${noteId}/photos`, fd, { headers: { "Content-Type": "multipart/form-data" } });
         toast.success(`Barcode di ${serial} allegato`);
-        onPhotoAttached?.();
       } catch (_) { /* silent — user can still toggle manually */ }
-      finally { setAttaching(false); }
-    }
+      // 3) Segnala al parent di ricaricare la nota (ora il server ha il valore aggiornato)
+      onPhotoAttached?.();
+    } finally { setAttaching(false); }
   };
 
   return (
@@ -677,19 +730,22 @@ function AssignedSerialInput({ value, onChange, tipoHint, placeholder, testId, n
                 <span className="text-xs font-semibold text-slate-700">Seriali assegnati alla squadra</span>
                 <span className="ml-auto text-[10px] text-slate-400">{assigned.length}</span>
               </div>
-              {assigned.length === 0 ? (
+              {sortedAssigned.length === 0 ? (
                 <div className="p-4 text-xs text-slate-400 text-center italic">Nessun seriale assegnato</div>
               ) : (
                 <div className="py-1">
-                  {assigned.map((s) => (
-                    <button key={s.id} type="button" onClick={() => pick(s.serial)}
-                      className={`w-full text-left px-3 py-2 text-sm font-mono hover:bg-pink-50 flex items-center gap-2 ${value === s.serial ? "bg-pink-100" : ""}`}
-                      data-testid={`${testId}-option-${s.serial}`}>
-                      <span className="flex-1 truncate">{s.serial}</span>
-                      {s.tipo && <span className="text-[10px] font-bold text-pink-800 bg-pink-100 rounded-full px-1.5 py-0.5">{s.tipo}</span>}
-                      {s.assigned_to_name && <span className="text-[10px] text-slate-500 truncate max-w-[80px]">{s.assigned_to_name}</span>}
-                    </button>
-                  ))}
+                  {sortedAssigned.map((s) => {
+                    const matchesHint = tipoHint && (s.tipo || "").toString().toUpperCase().includes(tipoHint.toString().toUpperCase());
+                    return (
+                      <button key={s.id} type="button" onClick={() => pick(s.serial)}
+                        className={`w-full text-left px-3 py-2 text-sm font-mono hover:bg-pink-50 flex items-center gap-2 ${value === s.serial ? "bg-pink-100" : ""}`}
+                        data-testid={`${testId}-option-${s.serial}`}>
+                        <span className="flex-1 truncate">{s.serial}</span>
+                        {s.tipo && <span className={`text-[10px] font-bold rounded-full px-1.5 py-0.5 ${matchesHint ? "text-emerald-800 bg-emerald-100" : "text-pink-800 bg-pink-100"}`}>{s.tipo}</span>}
+                        {s.assigned_to_name && <span className="text-[10px] text-slate-500 truncate max-w-[80px]">{s.assigned_to_name}</span>}
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -1050,32 +1106,40 @@ function NoteCard({ note, onChanged, defaultOpen, selected, onToggleSelect, onOp
             <strong>Suggerimento:</strong> "Scansiona seriale" apre la fotocamera per leggere codici a barre/QR del modem. "Scatta foto" apre la fotocamera per allegare foto alla nota.
           </div>
 
-          {/* Dati privati SEMPRE visibili (non finiscono nella nota) */}
+          {/* Dati privati SEMPRE visibili e completamente leggibili (non finiscono nella nota) */}
           {(note.phone_client || note.apparato_password || note.id_servizio || note.id_risorsa) && (
             <div className="mt-3 rounded-xl bg-slate-50 border border-slate-200 p-3" data-testid={`private-data-${note.wr}`}>
-              <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-1.5 flex items-center gap-1">
-                🔒 Dati di lavoro (non nella nota)
+              <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-2 flex items-center gap-1">
+                🔒 Dati di lavoro (non nella nota) — tap sul valore o sull'icona per copiare
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {[
                   { k: "phone_client", label: "Telefono cliente", isTel: true },
                   { k: "id_servizio", label: "ID SERVIZIO" },
                   { k: "id_risorsa", label: "ID RISORSA" },
                   { k: "apparato_password", label: "Password" },
                 ].map((f) => note[f.k] ? (
-                  <div key={f.k} className="min-w-0" data-testid={`private-${f.k}-${note.wr}`}>
-                    <div className="text-[10px] text-slate-500 font-semibold">{f.label}</div>
-                    <div className="flex items-center gap-1 mt-0.5">
-                      {f.isTel ? (
-                        <a href={`tel:${note[f.k]}`} className="text-xs font-mono font-semibold text-brand-pink brand-pink hover:underline truncate">{note[f.k]}</a>
-                      ) : (
-                        <span className="text-xs font-mono font-semibold text-slate-900 truncate">{note[f.k]}</span>
-                      )}
+                  <div key={f.k} className="bg-white rounded-lg border border-slate-200 px-3 py-2" data-testid={`private-${f.k}-${note.wr}`}>
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <div className="text-[10px] text-slate-500 font-semibold uppercase tracking-wide">{f.label}</div>
                       <button onClick={() => { navigator.clipboard.writeText(note[f.k]); toast.success(`${f.label} copiato`); }}
-                        className="text-slate-400 hover:text-slate-800 shrink-0" data-testid={`copy-${f.k}-${note.wr}`} title="Copia">
-                        <Copy size={11} />
+                        className="text-slate-400 hover:text-brand-pink brand-pink shrink-0 inline-flex items-center gap-1 text-[10px] font-semibold"
+                        data-testid={`copy-${f.k}-${note.wr}`} title="Copia">
+                        <Copy size={11} /> Copia
                       </button>
                     </div>
+                    {f.isTel ? (
+                      <a href={`tel:${note[f.k]}`}
+                        onClick={(e) => { e.preventDefault(); navigator.clipboard.writeText(note[f.k]); toast.success(`${f.label} copiato`); window.location.href = `tel:${note[f.k]}`; }}
+                        className="block text-sm font-mono font-semibold text-brand-pink brand-pink hover:underline break-all select-all cursor-pointer">
+                        {note[f.k]}
+                      </a>
+                    ) : (
+                      <div onClick={() => { navigator.clipboard.writeText(note[f.k]); toast.success(`${f.label} copiato`); }}
+                        className="text-sm font-mono font-semibold text-slate-900 break-all select-all cursor-pointer hover:bg-slate-50 rounded px-1 -mx-1">
+                        {note[f.k]}
+                      </div>
+                    )}
                   </div>
                 ) : null)}
               </div>
@@ -1127,12 +1191,14 @@ function NoteCard({ note, onChanged, defaultOpen, selected, onToggleSelect, onOp
                 <label className="text-xs font-medium text-slate-600 sm:col-span-2" onFocus={() => setLastField("cpe")}>
                   CPE (seriale modem)
                   <AssignedSerialInput value={form.cpe} tipoHint="CPE" noteId={note.id} onPhotoAttached={onChanged}
+                    onPersist={async (v) => { await axios.patch(`${API}/notes/${note.id}`, { cpe: v }); }}
                     onChange={(v) => { setForm({ ...form, cpe: v }); setNoteDirty(false); setLastField("cpe"); }}
                     placeholder="Seleziona da assegnati o digita…" testId={`field-cpe-${note.wr}`} />
                 </label>
                 <label className="text-xs font-medium text-slate-600 sm:col-span-2" onFocus={() => setLastField("ont_sfp")}>
                   ONT / SFP
                   <AssignedSerialInput value={form.ont_sfp} tipoHint="ONT" noteId={note.id} onPhotoAttached={onChanged}
+                    onPersist={async (v) => { await axios.patch(`${API}/notes/${note.id}`, { ont_sfp: v }); }}
                     onChange={(v) => { setForm({ ...form, ont_sfp: v }); setNoteDirty(false); setLastField("ont_sfp"); }}
                     placeholder="Seleziona da assegnati o digita…" testId={`field-ont_sfp-${note.wr}`} />
                 </label>
@@ -1155,6 +1221,11 @@ function NoteCard({ note, onChanged, defaultOpen, selected, onToggleSelect, onOp
                         onChange={(e) => { const arr = [...(form.materials || [])]; arr[i] = { ...arr[i], tipo: e.target.value }; setForm({ ...form, materials: arr }); setNoteDirty(false); }}
                         className="rounded-lg border border-slate-200 px-2 py-2 text-xs font-semibold" />
                       <AssignedSerialInput value={m.serial} tipoHint={m.tipo} noteId={note.id} onPhotoAttached={onChanged}
+                        onPersist={async (v) => {
+                          const arr = [...(form.materials || [])];
+                          arr[i] = { ...arr[i], serial: v };
+                          await axios.patch(`${API}/notes/${note.id}`, { materials: arr });
+                        }}
                         onChange={(v) => { const arr = [...(form.materials || [])]; arr[i] = { ...arr[i], serial: v }; setForm({ ...form, materials: arr }); setNoteDirty(false); }}
                         placeholder="Seriale" testId={`material-serial-${note.wr}-${i}`} />
                       <button type="button" onClick={() => { const arr = [...(form.materials || [])]; arr.splice(i, 1); setForm({ ...form, materials: arr }); setNoteDirty(false); }}
