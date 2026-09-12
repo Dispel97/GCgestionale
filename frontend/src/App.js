@@ -2177,6 +2177,7 @@ function WarehousePage({ onOpenAdmin, showAdminBtn }) {
                       className="h-4 w-4 rounded border-slate-300 accent-pink-600 cursor-pointer" data-testid="wh-select-all" />
                   </th>
                   <th className="py-2 pr-2">Seriale</th>
+                  <th className="py-2 pr-2">OLO / WR</th>
                   <th className="py-2 pr-2">Tag</th>
                   <th className="py-2 pr-2">Stato</th>
                   <th className="py-2 pr-2">Assegnato a</th>
@@ -2195,6 +2196,22 @@ function WarehousePage({ onOpenAdmin, showAdminBtn }) {
                       <button onClick={() => setHistoryItem(s)} className="inline-flex items-center gap-1.5 hover:brand-pink hover:underline decoration-dotted underline-offset-2" data-testid={`serial-history-${s.serial}`} title="Vedi storico">
                         <History size={12} className="text-slate-400" /> {s.serial}
                       </button>
+                    </td>
+                    <td className="py-2 pr-2 text-xs" data-testid={`serial-olo-${s.serial}`}>
+                      {s.downloaded_olo || s.downloaded_note_wr ? (
+                        <div className="flex flex-col gap-0.5">
+                          {s.downloaded_olo && (
+                            <span onClick={() => { navigator.clipboard.writeText(s.downloaded_olo); toast.success("OLO copiato"); }}
+                              className="font-mono font-semibold text-pink-800 bg-pink-50 border border-pink-200 rounded px-1.5 py-0.5 inline-block cursor-pointer hover:bg-pink-100 break-all"
+                              title="Tap per copiare l'OLO">
+                              {s.downloaded_olo}
+                            </span>
+                          )}
+                          {s.downloaded_note_wr && (
+                            <span className="text-[10px] text-slate-500 font-mono">WR {s.downloaded_note_wr}</span>
+                          )}
+                        </div>
+                      ) : <span className="text-slate-300">—</span>}
                     </td>
                     <td className="py-2 pr-2 text-slate-600">
                       {editingTipoId === s.id ? (
