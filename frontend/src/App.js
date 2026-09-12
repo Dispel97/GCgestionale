@@ -6,7 +6,7 @@ import {
   Loader2, Search, ChevronDown, ChevronUp, Save, X, Camera, RotateCcw,
   LogOut, Shield, UserCheck, UserX, Users, ScanLine, LogIn, UserPlus,
   Package, RefreshCw, Calendar, CheckCircle2, PauseCircle, Warehouse,
-  Bell, History, Zap, ZapOff, Download,
+  Bell, History, Zap, ZapOff, Download, Edit3,
 } from "lucide-react";
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from "html5-qrcode";
 import JsBarcode from "jsbarcode";
@@ -358,6 +358,11 @@ function AdminPanel({ onClose }) {
     if (!["user", "magazzino"].includes(role)) { toast.error("Ruolo non valido (usa 'user' o 'magazzino')"); return; }
     try { await axios.post(`${API}/auth/admin/demote/${id}`, { role }); toast.success(`${email} declassato a ${role === "magazzino" ? "Magazzino" : "Tecnico"}`); fetchUsers(); } catch (e) { toast.error(errorText(e)); }
   };
+  const toggleLeader = async (id, email, currently) => {
+    const target = !currently;
+    if (!window.confirm(target ? `Rendere ${email} CAPOSQUADRA? Potrà scegliere il collega di giornata e condividere note e seriali.` : `Rimuovere il ruolo di caposquadra a ${email}?`)) return;
+    try { await axios.post(`${API}/auth/admin/set-team-leader/${id}`, { is_team_leader: target }); toast.success(target ? `${email} è ora caposquadra` : `${email} non è più caposquadra`); fetchUsers(); } catch (e) { toast.error(errorText(e)); }
+  };
 
   const pending = users.filter((u) => !u.is_approved && u.role !== "admin");
   const approved = users.filter((u) => u.is_approved || u.role === "admin");
@@ -408,9 +413,18 @@ function AdminPanel({ onClose }) {
                       {u.role === "admin" && <span className="ml-1 text-[10px] font-bold text-brand-pink brand-pink">ADMIN{isTargetSuperAdmin ? " ★" : ""}</span>}
                       {u.role === "magazzino" && <span className="ml-1 text-[10px] font-bold text-slate-800 bg-slate-100 px-1.5 py-0.5 rounded">MAGAZZINO</span>}
                       {u.role === "user" && <span className="ml-1 text-[10px] font-bold text-slate-500">TECNICO</span>}
+                      {u.is_team_leader && <span className="ml-1 text-[10px] font-bold text-pink-800 bg-pink-100 px-1.5 py-0.5 rounded" title="Caposquadra: può scegliere il collega di giornata">⭐ CAPOSQUADRA</span>}
                     </div>
                     <div className="text-xs text-slate-500">{u.name || "—"} • {new Date(u.created_at).toLocaleString("it-IT")}</div>
                   </div>
+                  {u.role === "user" && (
+                    <button onClick={() => toggleLeader(u.id, u.email, !!u.is_team_leader)}
+                      className={`rounded-full px-3 py-1.5 text-xs font-semibold inline-flex items-center gap-1 ${u.is_team_leader ? "bg-pink-100 text-pink-800 hover:bg-pink-200" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`}
+                      data-testid={`toggle-leader-${u.email}`}
+                      title={u.is_team_leader ? "Rimuovi ruolo caposquadra" : "Rendi caposquadra"}>
+                      ⭐ {u.is_team_leader ? "Rimuovi caposq." : "Caposquadra"}
+                    </button>
+                  )}
                   {u.role !== "admin" && (
                     <>
                       <select value={u.role} onChange={(e) => setRole(u.id, e.target.value)}
@@ -443,9 +457,89 @@ function AdminPanel({ onClose }) {
               })}
             </div>
           </section>
+          <ArchiveSection />
         </div>
       </div>
     </div>
+  );
+}
+
+// ---------- Archive Section (admin only) ----------
+function ArchiveSection() {
+  const today = new Date().toISOString().slice(0, 10);
+  const oneYearAgo = new Date(Date.now() - 365 * 86400 * 1000).toISOString().slice(0, 10);
+  const [before, setBefore] = useState(oneYearAgo);
+  const [busy, setBusy] = useState(false);
+  const [lastResult, setLastResult] = useState(null);
+
+  const exportArchive = async (withFilter) => {
+    setBusy(true);
+    try {
+      const params = withFilter ? { before } : {};
+      const r = await axios.get(`${API}/admin/archive/export`, { params });
+      const filename = withFilter ? `archivio_pre_${before}.json` : `archivio_completo_${today}.json`;
+      downloadFile(filename, JSON.stringify(r.data, null, 2), "application/json");
+      const counts = Object.entries(r.data.collections || {}).map(([k, v]) => `${k}: ${v.length}`).join(", ");
+      toast.success(`Archivio scaricato — ${counts}`);
+    } catch (e) { toast.error(errorText(e)); }
+    finally { setBusy(false); }
+  };
+
+  const purge = async () => {
+    if (!window.confirm(`⚠️ Sei sicuro?\n\nVerranno ELIMINATI definitivamente:\n• Note create prima del ${before}\n• Eventi seriali prima del ${before}\n• Notifiche prima del ${before}\n• Richieste ferie prima del ${before}\n\nUsers e seriali NON vengono toccati.\n\nPrima assicurati di aver scaricato l'archivio!`)) return;
+    if (!window.confirm("Ultima conferma: procedo con l'eliminazione?")) return;
+    setBusy(true);
+    try {
+      const r = await axios.post(`${API}/admin/archive/purge`, { before, collections: ["notes", "serial_events", "notifications", "vacations"] });
+      setLastResult(r.data);
+      const counts = Object.entries(r.data.deleted || {}).map(([k, v]) => `${k}: ${v}`).join(", ");
+      toast.success(`Archiviato — eliminati ${counts}`);
+    } catch (e) { toast.error(errorText(e)); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <section data-testid="archive-section" className="border-t border-slate-200 pt-5">
+      <h3 className="text-sm font-semibold text-slate-900 mb-1 inline-flex items-center gap-2">
+        📦 Archivio & Manutenzione DB
+      </h3>
+      <p className="text-xs text-slate-500 mb-3">Scarica una copia JSON dei dati e libera spazio eliminando note/eventi/notifiche vecchie. Il super-admin lo usa quando il DB si riempie.</p>
+      <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 space-y-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <label className="text-xs font-semibold text-slate-700">Data limite (elimina/esporta prima di):</label>
+          <input type="date" value={before} onChange={(e) => setBefore(e.target.value)}
+            max={today}
+            className="rounded-full border border-amber-300 bg-white px-3 py-1.5 text-xs font-mono"
+            data-testid="archive-before-date" />
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button onClick={() => exportArchive(true)} disabled={busy}
+            className="rounded-full px-3 py-1.5 text-xs font-semibold bg-slate-900 text-white hover:bg-slate-800 inline-flex items-center gap-2 disabled:opacity-60"
+            data-testid="archive-export-filtered">
+            {busy ? <Loader2 className="animate-spin" size={12} /> : <Download size={12} />}
+            Esporta archivio (pre {before})
+          </button>
+          <button onClick={() => exportArchive(false)} disabled={busy}
+            className="rounded-full px-3 py-1.5 text-xs font-semibold bg-slate-100 text-slate-800 hover:bg-slate-200 inline-flex items-center gap-2 disabled:opacity-60"
+            data-testid="archive-export-all">
+            <Download size={12} /> Backup completo
+          </button>
+          <button onClick={purge} disabled={busy}
+            className="rounded-full px-3 py-1.5 text-xs font-semibold bg-red-600 text-white hover:bg-red-700 inline-flex items-center gap-2 disabled:opacity-60"
+            data-testid="archive-purge">
+            <Trash2 size={12} /> Elimina & libera spazio
+          </button>
+        </div>
+        {lastResult && (
+          <div className="text-[11px] text-slate-600 bg-white rounded-lg border border-slate-200 p-2" data-testid="archive-last-result">
+            Ultima pulizia ({lastResult.before}): {Object.entries(lastResult.deleted || {}).map(([k, v]) => `${k}=${v}`).join(" • ")}
+          </div>
+        )}
+        <div className="text-[10px] text-amber-900 leading-snug">
+          <strong>Nota:</strong> "Backup completo" scarica tutti i dati (note+seriali+eventi+notifiche+ferie+utenti). "Elimina" rimuove solo note, eventi, notifiche e ferie più vecchie di quella data. Utenti e seriali attivi restano intatti.
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -627,6 +721,66 @@ function PdfUploader({ onParsed }) {
           <FileText size={16} /> {loading ? "Analisi…" : "Seleziona PDF"}
         </button>
       </div>
+    </div>
+  );
+}
+
+// ---------- Private field helpers (inline edit for dati di lavoro) ----------
+function PrivateFieldValue({ v, isTel, label, onEdit }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(v);
+  useEffect(() => setDraft(v), [v]);
+  if (editing) {
+    return (
+      <div className="flex items-center gap-1">
+        <input type={isTel ? "tel" : "text"} value={draft} autoFocus
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") { onEdit(draft); setEditing(false); } if (e.key === "Escape") setEditing(false); }}
+          className="flex-1 rounded border border-brand-pink/50 px-2 py-1 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-pink" />
+        <button onClick={() => { onEdit(draft); setEditing(false); }} className="text-emerald-600 text-xs font-bold px-1" title="Salva">✓</button>
+        <button onClick={() => setEditing(false)} className="text-slate-400 text-xs font-bold px-1" title="Annulla">✕</button>
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-start gap-1">
+      {isTel ? (
+        <a href={`tel:${v}`}
+          onClick={(e) => { e.preventDefault(); navigator.clipboard.writeText(v); toast.success(`${label} copiato`); window.location.href = `tel:${v}`; }}
+          className="flex-1 text-sm font-mono font-semibold text-brand-pink brand-pink hover:underline break-all select-all cursor-pointer">
+          {v}
+        </a>
+      ) : (
+        <div onClick={() => { navigator.clipboard.writeText(v); toast.success(`${label} copiato`); }}
+          className="flex-1 text-sm font-mono font-semibold text-slate-900 break-all select-all cursor-pointer hover:bg-slate-50 rounded px-1 -mx-1">
+          {v}
+        </div>
+      )}
+      <button onClick={() => setEditing(true)} className="text-slate-300 hover:text-slate-700 shrink-0" title="Modifica"><Edit3 size={11} /></button>
+    </div>
+  );
+}
+
+function PrivateFieldEmpty({ placeholder, label, testId, onSave }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  if (!editing) {
+    return (
+      <button onClick={() => setEditing(true)}
+        className="w-full text-left text-xs text-slate-400 italic hover:text-brand-pink brand-pink hover:bg-white rounded px-1 py-1 -mx-1 border border-dashed border-slate-200 hover:border-brand-pink"
+        data-testid={testId}>
+        + aggiungi {label.toLowerCase()}
+      </button>
+    );
+  }
+  return (
+    <div className="flex items-center gap-1">
+      <input type="text" value={draft} autoFocus placeholder={placeholder}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter" && draft.trim()) { onSave(draft); setEditing(false); setDraft(""); } if (e.key === "Escape") { setEditing(false); setDraft(""); } }}
+        className="flex-1 rounded border border-brand-pink/50 px-2 py-1 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-pink" />
+      <button onClick={() => { if (draft.trim()) { onSave(draft); setEditing(false); setDraft(""); } }} className="text-emerald-600 text-xs font-bold px-1" title="Salva">✓</button>
+      <button onClick={() => { setEditing(false); setDraft(""); }} className="text-slate-400 text-xs font-bold px-1" title="Annulla">✕</button>
     </div>
   );
 }
@@ -1107,44 +1261,51 @@ function NoteCard({ note, onChanged, defaultOpen, selected, onToggleSelect, onOp
           </div>
 
           {/* Dati privati SEMPRE visibili e completamente leggibili (non finiscono nella nota) */}
-          {(note.phone_client || note.apparato_password || note.id_servizio || note.id_risorsa) && (
-            <div className="mt-3 rounded-xl bg-slate-50 border border-slate-200 p-3" data-testid={`private-data-${note.wr}`}>
-              <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-2 flex items-center gap-1">
-                🔒 Dati di lavoro (non nella nota) — tap sul valore o sull'icona per copiare
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {[
-                  { k: "phone_client", label: "Telefono cliente", isTel: true },
-                  { k: "id_servizio", label: "ID SERVIZIO" },
-                  { k: "id_risorsa", label: "ID RISORSA" },
-                  { k: "apparato_password", label: "Password" },
-                ].map((f) => note[f.k] ? (
+          {/* Dati di lavoro — SEMPRE visibili, con editing inline per campi mancanti (non finiscono nella nota) */}
+          <div className="mt-3 rounded-xl bg-slate-50 border border-slate-200 p-3" data-testid={`private-data-${note.wr}`}>
+            <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-2 flex items-center gap-1">
+              🔒 Dati di lavoro (non nella nota) — tap sul valore per copiare, sul "+" per aggiungere
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {[
+                { k: "phone_client", label: "Telefono cliente", isTel: true, ph: "es. 328 1234567" },
+                { k: "id_servizio", label: "ID SERVIZIO", ph: "AAA0001234" },
+                { k: "id_risorsa", label: "ID RISORSA", ph: "es. 55 7528 6472…" },
+                { k: "apparato_password", label: "Password", ph: "password apparato" },
+              ].map((f) => {
+                const v = (form[f.k] ?? note[f.k] ?? "").toString();
+                const has = v.trim() !== "";
+                const saveField = async (newVal) => {
+                  const clean = (newVal ?? "").trim();
+                  setForm({ ...form, [f.k]: clean });
+                  try {
+                    await axios.patch(`${API}/notes/${note.id}`, { [f.k]: clean });
+                    toast.success(`${f.label} salvato`);
+                    onChanged?.();
+                  } catch (e) { toast.error(errorText(e)); }
+                };
+                return (
                   <div key={f.k} className="bg-white rounded-lg border border-slate-200 px-3 py-2" data-testid={`private-${f.k}-${note.wr}`}>
                     <div className="flex items-center justify-between gap-2 mb-1">
                       <div className="text-[10px] text-slate-500 font-semibold uppercase tracking-wide">{f.label}</div>
-                      <button onClick={() => { navigator.clipboard.writeText(note[f.k]); toast.success(`${f.label} copiato`); }}
-                        className="text-slate-400 hover:text-brand-pink brand-pink shrink-0 inline-flex items-center gap-1 text-[10px] font-semibold"
-                        data-testid={`copy-${f.k}-${note.wr}`} title="Copia">
-                        <Copy size={11} /> Copia
-                      </button>
+                      {has ? (
+                        <button onClick={() => { navigator.clipboard.writeText(v); toast.success(`${f.label} copiato`); }}
+                          className="text-slate-400 hover:text-brand-pink brand-pink shrink-0 inline-flex items-center gap-1 text-[10px] font-semibold"
+                          data-testid={`copy-${f.k}-${note.wr}`} title="Copia">
+                          <Copy size={11} /> Copia
+                        </button>
+                      ) : null}
                     </div>
-                    {f.isTel ? (
-                      <a href={`tel:${note[f.k]}`}
-                        onClick={(e) => { e.preventDefault(); navigator.clipboard.writeText(note[f.k]); toast.success(`${f.label} copiato`); window.location.href = `tel:${note[f.k]}`; }}
-                        className="block text-sm font-mono font-semibold text-brand-pink brand-pink hover:underline break-all select-all cursor-pointer">
-                        {note[f.k]}
-                      </a>
+                    {has ? (
+                      <PrivateFieldValue v={v} isTel={f.isTel} label={f.label} onEdit={(newV) => saveField(newV)} />
                     ) : (
-                      <div onClick={() => { navigator.clipboard.writeText(note[f.k]); toast.success(`${f.label} copiato`); }}
-                        className="text-sm font-mono font-semibold text-slate-900 break-all select-all cursor-pointer hover:bg-slate-50 rounded px-1 -mx-1">
-                        {note[f.k]}
-                      </div>
+                      <PrivateFieldEmpty placeholder={f.ph} label={f.label} testId={`add-${f.k}-${note.wr}`} onSave={saveField} />
                     )}
                   </div>
-                ) : null)}
-              </div>
+                );
+              })}
             </div>
-          )}
+          </div>
 
           {edit && (
             <div className="mt-4 space-y-4" data-testid={`edit-form-${note.wr}`}>
@@ -1458,10 +1619,12 @@ function StatsPanel({ notes, onReset }) {
 
 // ---------- Team Picker (compagno di squadra giornaliero) ----------
 function TeamPicker() {
+  const { user } = useAuth();
   const [users, setUsers] = useState([]);
   const [partner, setPartner] = useState(null);
   const [partnerId, setPartnerId] = useState("");
   const [saving, setSaving] = useState(false);
+  const isLeader = !!user?.is_team_leader;
 
   const refresh = useCallback(async () => {
     try {
@@ -1473,10 +1636,12 @@ function TeamPicker() {
 
   useEffect(() => {
     (async () => {
-      try { const r = await axios.get(`${API}/users/approved`); setUsers(r.data || []); } catch (_) {}
+      if (isLeader) {
+        try { const r = await axios.get(`${API}/users/approved`); setUsers(r.data || []); } catch (_) {}
+      }
       refresh();
     })();
-  }, [refresh]);
+  }, [refresh, isLeader]);
 
   const savePartner = async (uid) => {
     setSaving(true);
@@ -1488,9 +1653,26 @@ function TeamPicker() {
     finally { setSaving(false); }
   };
 
+  // Non-caposquadra: mostra solo lo stato in sola lettura
+  if (!isLeader) {
+    return (
+      <div className="flex items-center gap-2" data-testid="team-picker-readonly">
+        <Users size={14} className="text-slate-500" />
+        {partner ? (
+          <span className="text-[11px] font-semibold text-pink-800 bg-pink-50 border border-pink-200 rounded-full px-2 py-1" data-testid="team-partner-badge-readonly" title="Assegnato dal tuo caposquadra">
+            👥 In squadra con {partner.name || partner.email}
+          </span>
+        ) : (
+          <span className="text-[11px] font-medium text-slate-400 italic" title="Solo un caposquadra può creare la squadra">Nessuna squadra oggi</span>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="flex items-center gap-2" data-testid="team-picker">
-      <Users size={14} className="text-slate-500" />
+      <Users size={14} className="brand-pink" />
+      <span className="text-[10px] font-bold text-pink-800 bg-pink-100 rounded-full px-1.5 py-0.5" title="Sei caposquadra: puoi scegliere il collega">⭐ CAPOSQUADRA</span>
       <select value={partnerId} onChange={(e) => { setPartnerId(e.target.value); savePartner(e.target.value); }}
         disabled={saving}
         className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-pink"

@@ -118,6 +118,23 @@ gc-impianti-app/
 
 ## Cose importanti da sapere
 
+### 📦 Archivio & pulizia DB (nuovo — Iter 18)
+Se il DB si sta riempiendo, l'admin può liberare spazio direttamente dal Pannello Amministratore:
+1. **Backup completo** → scarica tutto il DB in un file JSON (`archivio_completo_YYYY-MM-DD.json`)
+2. **Esporta archivio (pre data)** → scarica solo i dati più vecchi di una data (`archivio_pre_YYYY-MM-DD.json`)
+3. **Elimina & libera spazio** → cancella note, eventi seriali, notifiche e ferie più vecchi di quella data. Utenti e seriali attivi restano intatti.
+
+⚠️ **Sempre in questo ordine**: prima scarica il backup, poi elimina. Il JSON scaricato è ripristinabile via `mongoimport` (vedi MIGRATION.md).
+
+### 👥 Caposquadra (nuovo — Iter 18)
+- Nel pannello admin ogni tecnico ha un pulsante ⭐ **Caposquadra** per attivare/rimuovere il ruolo.
+- Solo i caposquadra possono scegliere il compagno di giornata dal menù in alto.
+- Quando il caposquadra sceglie un collega, quest'ultimo vede automaticamente i seriali assegnati al caposquadra nel proprio dropdown, e le note della giornata vengono condivise bidirezionalmente.
+
+### 🔐 Super-admin (Iter 17)
+- `giuseppe97belviso@gmail.com` è il **super-admin** definito nella variabile d'ambiente `ADMIN_EMAIL`.
+- Solo il super-admin può declassare altri admin. Se cambi `ADMIN_EMAIL` nel `.env` deployato, sarà quell'email il nuovo super-admin.
+
 ### 🔐 Segreti nel repo
 Il file `backend/.env` NON viene committato per default (contiene chiavi sensibili). Prima di deployare:
 1. Genera una nuova `JWT_SECRET` (vedi `MIGRAZIONE_SMARTPHONE.md`)

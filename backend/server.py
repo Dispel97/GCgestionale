@@ -425,6 +425,15 @@ class ApproveRequest(BaseModel):
     role: Optional[str] = "user"  # "user" | "magazzino"
 
 
+class TeamLeaderRequest(BaseModel):
+    is_team_leader: bool = True
+
+
+class ArchivePurgeRequest(BaseModel):
+    before: str  # ISO date YYYY-MM-DD; delete docs strictly older than this date
+    collections: List[str] = Field(default_factory=lambda: ["notes", "serial_events", "notifications"])
+
+
 class TeamRequest(BaseModel):
     partner_user_id: Optional[str] = ""  # empty string clears the partnership
     date: Optional[str] = None  # YYYY-MM-DD; default = today
@@ -560,7 +569,8 @@ async def login(req: LoginRequest):
         "access_token": token, "token_type": "bearer",
         "user": {"id": user["id"], "email": user["email"], "name": user.get("name", ""),
                  "role": user.get("role", "user"), "is_approved": user.get("is_approved", False),
-                 "is_super_admin": is_super_admin},
+                 "is_super_admin": is_super_admin,
+                 "is_team_leader": bool(user.get("is_team_leader", False))},
     }
 
 
@@ -569,7 +579,8 @@ async def me(user: dict = Depends(get_current_user)):
     is_super_admin = (user.get("email", "").lower() == ADMIN_EMAIL) and user.get("role") == "admin"
     return {"id": user["id"], "email": user["email"], "name": user.get("name", ""),
             "role": user.get("role", "user"), "is_approved": user.get("is_approved", False),
-            "is_super_admin": is_super_admin}
+            "is_super_admin": is_super_admin,
+            "is_team_leader": bool(user.get("is_team_leader", False))}
 
 
 @api_router.get("/auth/admin/users")
@@ -661,6 +672,73 @@ async def admin_demote(user_id: str, body: Optional[ApproveRequest] = None,
         raise HTTPException(status_code=400, detail="Ruolo non valido")
     await db.users.update_one({"id": user_id}, {"$set": {"role": new_role}})
     return {"demoted": True, "id": user_id, "role": new_role}
+
+
+@api_router.post("/auth/admin/set-team-leader/{user_id}")
+async def admin_set_team_leader(user_id: str, body: TeamLeaderRequest,
+                                 admin: dict = Depends(get_current_admin)):
+    """Designa (o rimuove) un utente come caposquadra. Solo i caposquadra possono selezionare il compagno di squadra."""
+    target = await db.users.find_one({"id": user_id})
+    if not target:
+        raise HTTPException(status_code=404, detail="Utente non trovato")
+    await db.users.update_one({"id": user_id}, {"$set": {"is_team_leader": bool(body.is_team_leader)}})
+    # Se rimosso il flag, azzera anche le sue partnership attive
+    if not body.is_team_leader:
+        await db.teams.delete_many({"primary_user_id": user_id})
+    return {"ok": True, "id": user_id, "is_team_leader": bool(body.is_team_leader)}
+
+
+# ---------- Archivio DB (admin) ----------
+ARCHIVABLE_COLLECTIONS = {
+    "notes": "created_at",
+    "serial_events": "created_at",
+    "notifications": "created_at",
+    "vacations": "created_at",
+}
+
+
+@api_router.get("/admin/archive/export")
+async def archive_export(before: str = Query(""), admin: dict = Depends(get_current_admin)):
+    """Dump JSON di note + eventi seriali + notifiche + ferie (opzionale filtro before=YYYY-MM-DD).
+    Ritorna il file per il download; non elimina nulla."""
+    q: dict = {}
+    if before:
+        try:
+            datetime.fromisoformat(before)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Parametro 'before' non valido (usa YYYY-MM-DD)")
+        q = {"created_at": {"$lt": before + "T23:59:59"}}
+    payload: dict = {
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "exported_by": admin.get("email"),
+        "before": before or None,
+        "collections": {},
+    }
+    for coll in ARCHIVABLE_COLLECTIONS.keys():
+        docs = await db[coll].find(q if before else {}, {"_id": 0}).to_list(100000)
+        payload["collections"][coll] = docs
+    # Aggiungiamo anche users e serials (senza filtro) per un archivio completo
+    payload["collections"]["users"] = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(100000)
+    payload["collections"]["serials"] = await db.serials.find({}, {"_id": 0}).to_list(100000)
+    return payload
+
+
+@api_router.post("/admin/archive/purge")
+async def archive_purge(req: ArchivePurgeRequest, admin: dict = Depends(get_current_admin)):
+    """Elimina i documenti di note/serial_events/notifications/vacations più vecchi di 'before' (YYYY-MM-DD).
+    Non tocca users e serials. Usalo DOPO aver scaricato l'export per liberare spazio."""
+    try:
+        datetime.fromisoformat(req.before)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Parametro 'before' non valido (usa YYYY-MM-DD)")
+    cutoff = req.before + "T23:59:59"
+    deleted: dict = {}
+    for coll in req.collections:
+        if coll not in ARCHIVABLE_COLLECTIONS:
+            raise HTTPException(status_code=400, detail=f"Collezione '{coll}' non archiviabile")
+        res = await db[coll].delete_many({"created_at": {"$lt": cutoff}})
+        deleted[coll] = res.deleted_count
+    return {"purged": True, "before": req.before, "deleted": deleted}
 
 
 # ---------- Note Routes ----------
@@ -1218,6 +1296,9 @@ async def team_today(date: str = Query(""), user: dict = Depends(get_current_use
 
 @api_router.post("/team/today")
 async def set_team_today(req: TeamRequest, user: dict = Depends(get_current_user)):
+    # Solo i caposquadra (o admin) possono impostare il compagno di squadra
+    if not user.get("is_team_leader", False) and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Solo il caposquadra può impostare il compagno di squadra. Chiedi all'amministratore di designarti caposquadra.")
     d = req.date or datetime.now(timezone.utc).date().isoformat()
     # Clear existing partnerships owned by me for that day (only 1 partner per day per direction)
     await db.teams.delete_many({"primary_user_id": user["id"], "date": d})

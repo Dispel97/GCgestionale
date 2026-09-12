@@ -16,6 +16,16 @@ Web app che automatizza la generazione delle note tecniche OpenFiber a partire d
 
 ## Implemented (as of 12 Feb 2026)
 
+### Iteration 18 (12 Feb 2026) — Caposquadra + Archivio DB + Dati di lavoro editabili
+- **Caposquadra**: nuovo flag `is_team_leader` sull'utente. Endpoint `POST /api/auth/admin/set-team-leader/{user_id}` per designarlo (admin only). Solo i caposquadra possono impostare il compagno di squadra tramite `POST /team/today` (che ora ritorna 403 per i non-leader). Quando il caposquadra sceglie un collega, il collega vede automaticamente i seriali del caposquadra nel dropdown (via `_get_team_partners` bidirezionale già esistente) e le note della giornata vengono condivise. Rimuovere il flag caposquadra elimina anche le sue partnership attive.
+- **Frontend Header**: `TeamPicker` mostra `⭐ CAPOSQUADRA` + dropdown per i leader; per i tecnici normali mostra solo il badge in sola lettura "👥 In squadra con ..." o "Nessuna squadra oggi".
+- **Frontend AdminPanel**: nuovo pulsante `toggle-leader-{email}` per ogni tecnico (attiva/rimuove caposquadra). Badge `⭐ CAPOSQUADRA` sulle righe.
+- **Archivio & Manutenzione DB**: sezione dedicata nel Pannello Admin con 3 pulsanti (`archive-export-filtered`, `archive-export-all`, `archive-purge`) + date picker. Endpoint:
+  - `GET /admin/archive/export?before=YYYY-MM-DD` → JSON completo di notes+serial_events+notifications+vacations+users+serials (con filtro data opzionale)
+  - `POST /admin/archive/purge` → cancella docs più vecchi di `before` (whitelist: notes, serial_events, notifications, vacations). Utenti e seriali attivi non vengono toccati.
+- **Dati di lavoro sempre visibili + inline edit**: la sezione mostra ORA sempre tutte e 4 le card (Telefono cliente, ID SERVIZIO, ID RISORSA, Password). Se un campo è vuoto compare "+ aggiungi ..." cliccabile che apre un input inline; Enter salva sul server via `PATCH /notes/{id}`, Esc annulla. Se popolato: tap sul valore = copia + `tel:` link per il telefono, `<Edit3>` icon per modificare.
+- **EXPORT_GITHUB.md aggiornato**: nuova sezione "Archivio & pulizia DB" e "Caposquadra". File copiato in `frontend/public/downloads/` per download pubblico.
+
 ### Iteration 17 (12 Feb 2026) — Fix dropdown seriali + Super-admin & multi-admin
 - **Fix dropdown seriali → nota**: quando selezioni un seriale dal menù a tendina viene ora **salvato immediatamente sul server** (`PATCH /notes/{id}` con il campo target) PRIMA del refetch, così la nota viene rigenerata con il nuovo seriale. Prima il refetch sovrascriveva la selezione locale con lo stato server "vecchio".
 - **Nessun vincolo di tipo**: `GET /inventory/my-assigned` ignora ora il parametro `tipo` — qualsiasi seriale assegnato può essere selezionato in qualsiasi campo (CPE, ONT o extra). Utile quando il magazzino dà un CPEWIFI da usare come ONT o come extra. Nel dropdown i seriali con tipo coincidente all'hint restano in cima con badge verde, gli altri seguono con badge rosa.
