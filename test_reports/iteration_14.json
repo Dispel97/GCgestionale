@@ -1,0 +1,30 @@
+{
+  "summary": "Iter14 testing: backend + frontend for new features (warehouse tabs + bulk-delete + delete-tag, my-assigned dropdown, vacations workflow, admin dashboard, AssignedSerialInput with barcode preview). Backend: 12/12 pytest passed in test_iter14.py covering bulk-delete (returns {deleted:N}), tags/delete (clears tipo + removes threshold, 400 on empty tag), my-assigned (401 without auth, tipo filter works, scaricato excluded), vacations CRUD (user sees only theirs, admin sees all, non-admin cannot decide=>403, invalid decision=>400, invalid dates=>400, admin_note propagates, notifications kind=vacation_request emitted for admins and kind=vacation_decision for user), admin/dashboard (403 for non-admin, full shape validated with totals+avg_completed+stock, default from/to defaults to current month). Frontend: admin login OK, all 4 nav testids present (nav-notes/nav-warehouse/nav-vacations/nav-dashboard). Vacations page loaded with vacations-page container and 2 existing vacation-row-* rows (from backend tests); vacation-submit correctly hidden for admin. Admin dashboard loaded with dashboard-from/to date pickers and 4 user-stat-* cards. Warehouse: all 4 tab testids (wh-tab-in_stock/assegnato/scaricato/all) present with wh-tab-in_stock as default active (bg-white class), wh-select-all + wh-select-{serial} checkboxes render, selecting a row reveals warehouse-bulk-delete button. Notes edit form: AssignedSerialInput wired correctly — field-cpe-{wr} input + field-cpe-{wr}-toggle-barcode reveals field-cpe-{wr}-barcode-preview containing an <img> element (visually confirmed CPE barcode + QR rendered). Same for field-ont_sfp-{wr} and material-serial-{wr}-0. NOT tested (dependent on preexisting data or optional): warehouse-delete-tag button (no tipoFilter set — dropdown option list has no tag-chip testids; button confirmed in source and testid present). tag-chip testid does not exist in DOM (per-tag ripartizione uses different markup).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter14.py",
+    "/app/test_reports/pytest/iter14.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py now 1537 lines — split into routers/models/services modules (auth, notes, inventory, vacations, dashboard, notifications).",
+    "App.js is 2294 lines — extract WarehousePage, VacationsPage, AdminDashboard, NoteCard, AssignedSerialInput into separate files.",
+    "vacation notification schema reuses note_id/note_wr fields to store vacation id — inconsistent (see iter13 code review note about _check_threshold overloading note_wr). Consider adding a generic ref_id + ref_type field to notifications.",
+    "admin_dashboard iterates all serials via async cursor and all notes with to_list(50000) — acceptable now but if serials>50k this hides ObjectId errors and grows memory. Prefer aggregation pipeline with $group on user_id.",
+    "delete_tag does not emit 'tag_removed' history events on affected serials — audit trail lost for bulk edits. Consider add_serial_event for each modified serial (like bulk_delete_serials does).",
+    "my-assigned partner logic reuses _get_team_partners with today's date — a note edit form loaded at 23:59 could differ from the request time; not a real issue but document behavior.",
+    "vacation delete: non-admin user cannot cancel their own already approved/rejected vacation (404 by design). Confirm this matches the UX expectation."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter14.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin: giuseppe97belviso@gmail.com / Mucchetta4!",
+  "seed_data_creation": "Created TESTI14_{ts} tag with 3 serials for bulk-delete + delete-tag tests (cleaned up in test). Registered TEST_iter14_{ts}@example.com user (approved as 'user') — remains in DB, cascade-deletion on user is available via admin endpoint if cleanup needed. Vacation rows created in tests were deleted at end of each test. UI test filled CPE field on WR 17442632 with 'TESTCPE12345' but did NOT click Salva — form was cancelled by page unload, no persistence.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter14 complete. All 12 backend endpoints (bulk-delete, tags/delete, my-assigned, vacations create/list/decision/cancel, admin/dashboard) return expected shapes. Frontend testids all present and wired: nav-notes/warehouse/vacations/dashboard, wh-tab-* (default in_stock), wh-select-all + wh-select-{serial}, warehouse-bulk-delete conditional visible, field-cpe/ont_sfp/material-serial toggles + barcode preview <img>. Remaining test user in DB: TEST_iter14_*@example.com (role user, approved). Note WR 17442632 was opened in edit mode (unchanged since not saved)."
+}

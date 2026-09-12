@@ -378,6 +378,21 @@ class BulkDeleteRequest(BaseModel):
     ids: List[str]
 
 
+class VacationRequestCreate(BaseModel):
+    from_date: str  # YYYY-MM-DD
+    to_date: str
+    reason: Optional[str] = ""
+
+
+class VacationDecisionRequest(BaseModel):
+    decision: str  # "approved" | "rejected"
+    admin_note: Optional[str] = ""
+
+
+class DeleteTagRequest(BaseModel):
+    tag: str
+
+
 class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
@@ -1237,6 +1252,204 @@ async def _check_threshold(tag: str, actor_name: str = ""):
         from_user_name=actor_name or "sistema",
         note_wr=tag,  # reuse field to identify the tag
     )
+
+
+# ---------- Warehouse: bulk delete + delete tag ----------
+@api_router.post("/inventory/serials/bulk-delete")
+async def bulk_delete_serials(req: BulkDeleteRequest, user: dict = Depends(get_magazzino_or_admin)):
+    if not req.ids:
+        return {"deleted": 0}
+    docs = await db.serials.find({"id": {"$in": req.ids}}, {"_id": 0}).to_list(len(req.ids) + 1)
+    r = await db.serials.delete_many({"id": {"$in": req.ids}})
+    actor_name = user.get("name") or user.get("email") or ""
+    affected_tags = set()
+    for d in docs:
+        await add_serial_event(d["serial"], "deleted", user["id"], actor_name, extra={"bulk": True})
+        if d.get("tipo"): affected_tags.add(d["tipo"])
+    for tag in affected_tags:
+        try: await _check_threshold(tag, actor_name=actor_name)
+        except Exception: pass
+    return {"deleted": r.deleted_count}
+
+
+@api_router.post("/inventory/tags/delete")
+async def delete_tag(req: DeleteTagRequest, user: dict = Depends(get_magazzino_or_admin)):
+    tag = (req.tag or "").strip()
+    if not tag:
+        raise HTTPException(status_code=400, detail="Tag richiesto")
+    r = await db.serials.update_many({"tipo": tag}, {"$set": {"tipo": ""}})
+    await db.tag_thresholds.delete_one({"tag": tag})
+    return {"tag": tag, "updated": r.modified_count}
+
+
+# ---------- Warehouse: materiali assegnati all'utente corrente (per dropdown in nota) ----------
+@api_router.get("/inventory/my-assigned")
+async def my_assigned(tipo: str = Query(""), user: dict = Depends(get_current_user)):
+    """Ritorna i seriali assegnati a me o al mio partner di squadra oggi, che non sono ancora scaricati."""
+    today_iso = datetime.now(timezone.utc).date().isoformat()
+    partners = await _get_team_partners(user["id"], today_iso)
+    user_ids = [user["id"]] + partners
+    q = {
+        "assigned_to_user_id": {"$in": user_ids},
+        "status": {"$ne": "scaricato"},
+    }
+    if tipo:
+        q["tipo"] = tipo
+    docs = await db.serials.find(q, {"_id": 0}).sort("assigned_to_name", 1).to_list(500)
+    return docs
+
+
+# ---------- Vacations ----------
+@api_router.post("/vacations")
+async def create_vacation(req: VacationRequestCreate, user: dict = Depends(get_current_user)):
+    from datetime import date
+    try:
+        date.fromisoformat(req.from_date); date.fromisoformat(req.to_date)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Formato date non valido (usa YYYY-MM-DD)")
+    if req.from_date > req.to_date:
+        raise HTTPException(status_code=400, detail="Data inizio dopo data fine")
+    now_iso = datetime.now(timezone.utc).isoformat()
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "user_email": user.get("email", ""),
+        "user_name": user.get("name") or user.get("email", ""),
+        "from_date": req.from_date,
+        "to_date": req.to_date,
+        "reason": req.reason or "",
+        "status": "pending",
+        "admin_note": "",
+        "decided_by": "",
+        "decided_at": "",
+        "created_at": now_iso,
+    }
+    await db.vacations.insert_one(dict(doc))
+    # Notify all admins
+    admins = await db.users.find({"role": "admin", "is_approved": True}, {"_id": 0, "id": 1}).to_list(50)
+    from_who = user.get("name") or user.get("email") or ""
+    for a in admins:
+        await db.notifications.insert_one({
+            "id": str(uuid.uuid4()),
+            "user_id": a["id"],
+            "kind": "vacation_request",
+            "message": f"🏖️ {from_who} ha richiesto ferie dal {req.from_date} al {req.to_date}",
+            "from_user_name": from_who,
+            "note_id": doc["id"],  # store vacation id here for click-through
+            "note_wr": "",
+            "serials": [],
+            "read": False,
+            "created_at": now_iso,
+        })
+    return doc
+
+
+@api_router.get("/vacations")
+async def list_vacations(user: dict = Depends(get_current_user)):
+    if user.get("role") == "admin":
+        docs = await db.vacations.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    else:
+        docs = await db.vacations.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    return docs
+
+
+@api_router.post("/vacations/{vid}/decision")
+async def decide_vacation(vid: str, req: VacationDecisionRequest, user: dict = Depends(get_current_admin)):
+    if req.decision not in ("approved", "rejected"):
+        raise HTTPException(status_code=400, detail="Decisione non valida")
+    doc = await db.vacations.find_one({"id": vid}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Richiesta non trovata")
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.vacations.update_one({"id": vid}, {"$set": {
+        "status": req.decision,
+        "admin_note": req.admin_note or "",
+        "decided_by": user.get("email", ""),
+        "decided_at": now_iso,
+    }})
+    # Notify the technician
+    label = "approvata ✅" if req.decision == "approved" else "rifiutata ❌"
+    await db.notifications.insert_one({
+        "id": str(uuid.uuid4()),
+        "user_id": doc["user_id"],
+        "kind": "vacation_decision",
+        "message": f"La tua richiesta ferie ({doc['from_date']} → {doc['to_date']}) è stata {label}" + (f": {req.admin_note}" if req.admin_note else ""),
+        "from_user_name": user.get("email", ""),
+        "note_id": vid,
+        "note_wr": "",
+        "serials": [],
+        "read": False,
+        "created_at": now_iso,
+    })
+    return await db.vacations.find_one({"id": vid}, {"_id": 0})
+
+
+@api_router.delete("/vacations/{vid}")
+async def cancel_vacation(vid: str, user: dict = Depends(get_current_user)):
+    q = {"id": vid} if user.get("role") == "admin" else {"id": vid, "user_id": user["id"], "status": "pending"}
+    r = await db.vacations.delete_one(q)
+    if not r.deleted_count:
+        raise HTTPException(status_code=404, detail="Richiesta non trovata o non annullabile")
+    return {"deleted": 1}
+
+
+# ---------- Admin dashboard: media giornaliera per tecnico + giacenza per tecnico ----------
+@api_router.get("/admin/dashboard")
+async def admin_dashboard(
+    from_date: str = Query("", alias="from"),
+    to_date: str = Query("", alias="to"),
+    user: dict = Depends(get_current_admin),
+):
+    from datetime import date
+    today = datetime.now(timezone.utc).date()
+    if not from_date: from_date = today.replace(day=1).isoformat()
+    if not to_date: to_date = today.isoformat()
+
+    all_notes = await db.notes.find({}, {"_id": 0, "user_id": 1, "note_type": 1, "status": 1, "note_date": 1, "created_at": 1}).to_list(50000)
+    users = await db.users.find({"is_approved": True}, {"_id": 0, "id": 1, "email": 1, "name": 1, "role": 1}).to_list(500)
+
+    counted_days = [d for d in _daterange(from_date, to_date) if d.weekday() != 5]
+    wd = max(len(counted_days), 1)
+
+    def _classify(d):
+        t = d.get('note_type') or d.get('status') or 'limbo'
+        return t if t in ('espletato', 'sospeso', 'guasto', 'migrazione') else 'limbo'
+
+    def _get_date(d):
+        return (d.get('note_date') or (d.get('created_at') or '')[:10])
+
+    per_user = {u["id"]: {
+        "id": u["id"], "email": u.get("email", ""), "name": u.get("name") or u.get("email", ""),
+        "role": u.get("role", "user"),
+        "totals": {"limbo": 0, "espletato": 0, "sospeso": 0, "guasto": 0, "migrazione": 0},
+        "avg_completed": 0.0,
+        "stock": {"in_stock": 0, "assegnato": 0, "scaricato": 0},
+    } for u in users}
+
+    for n in all_notes:
+        dt = _get_date(n)
+        if not dt or dt < from_date or dt > to_date: continue
+        uid = n.get("user_id")
+        if uid not in per_user: continue
+        c = _classify(n)
+        per_user[uid]["totals"][c] = per_user[uid]["totals"].get(c, 0) + 1
+
+    # Personal stock = serials assegnati o scaricati da ciascun utente
+    async for s in db.serials.find({}, {"_id": 0, "assigned_to_user_id": 1, "downloaded_by_user_id": 1, "status": 1}):
+        aid = s.get("assigned_to_user_id") or ""
+        did = s.get("downloaded_by_user_id") or ""
+        st = s.get("status", "in_stock")
+        if aid and aid in per_user and st in ("in_stock", "assegnato"):
+            per_user[aid]["stock"][st] = per_user[aid]["stock"].get(st, 0) + 1
+        if did and did in per_user and st == "scaricato":
+            per_user[did]["stock"]["scaricato"] = per_user[did]["stock"].get("scaricato", 0) + 1
+
+    for u in per_user.values():
+        completed = u["totals"]["espletato"] + u["totals"]["migrazione"]
+        u["avg_completed"] = round(completed / wd, 2)
+
+    users_list = sorted(per_user.values(), key=lambda x: (-x["totals"]["espletato"], x["name"].lower()))
+    return {"from": from_date, "to": to_date, "working_days": wd, "users": users_list}
 
 
 # ---------- Notifications ----------

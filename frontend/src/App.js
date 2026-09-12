@@ -201,7 +201,7 @@ function Header({ onAdmin, showAdminBtn, page, onPageChange, canSwitchPage }) {
               {user.role === "magazzino" && <span className="ml-2 inline-flex items-center gap-1 text-[10px] font-bold text-slate-800 bg-slate-100 px-1.5 py-0.5 rounded"><Warehouse size={10} /> MAGAZZINO</span>}
             </div>
             {canSwitchPage && (
-              <div className="ml-auto flex gap-1 bg-slate-100 rounded-full p-1" data-testid="page-switcher">
+              <div className="ml-auto flex gap-1 bg-slate-100 rounded-full p-1 flex-wrap" data-testid="page-switcher">
                 <button onClick={() => onPageChange("notes")}
                   className={`px-3 py-1 rounded-full text-xs font-semibold inline-flex items-center gap-1 transition ${page === "notes" ? "bg-white text-slate-900 shadow" : "text-slate-500 hover:text-slate-800"}`}
                   data-testid="nav-notes">
@@ -212,6 +212,18 @@ function Header({ onAdmin, showAdminBtn, page, onPageChange, canSwitchPage }) {
                   data-testid="nav-warehouse">
                   <Warehouse size={12} /> Magazzino
                 </button>
+                <button onClick={() => onPageChange("vacations")}
+                  className={`px-3 py-1 rounded-full text-xs font-semibold inline-flex items-center gap-1 transition ${page === "vacations" ? "bg-white text-slate-900 shadow" : "text-slate-500 hover:text-slate-800"}`}
+                  data-testid="nav-vacations">
+                  <Calendar size={12} /> Ferie
+                </button>
+                {user.role === "admin" && (
+                  <button onClick={() => onPageChange("dashboard")}
+                    className={`px-3 py-1 rounded-full text-xs font-semibold inline-flex items-center gap-1 transition ${page === "dashboard" ? "bg-white text-slate-900 shadow" : "text-slate-500 hover:text-slate-800"}`}
+                    data-testid="nav-dashboard">
+                    <Shield size={12} /> Dashboard
+                  </button>
+                )}
               </div>
             )}
             <div className={`${canSwitchPage ? "" : "ml-auto"} flex gap-2 items-center flex-wrap`}>
@@ -585,6 +597,66 @@ function PdfUploader({ onParsed }) {
 }
 
 // ---------- Photo Manager (with camera capture) ----------
+// ---------- Assigned Serial Input (dropdown + barcode preview) ----------
+function AssignedSerialInput({ value, onChange, tipoHint, placeholder, testId }) {
+  const [assigned, setAssigned] = useState([]);
+  const [showBarcode, setShowBarcode] = useState(false);
+  const [imgUrl, setImgUrl] = useState(null);
+
+  useEffect(() => {
+    axios.get(`${API}/inventory/my-assigned`, { params: tipoHint ? { tipo: tipoHint } : {} })
+      .then((r) => setAssigned(r.data || []))
+      .catch(() => setAssigned([]));
+  }, [tipoHint]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (value && showBarcode) {
+      generateSerialImage(value, tipoHint || "").then((blob) => {
+        if (cancelled) return;
+        if (imgUrl) URL.revokeObjectURL(imgUrl);
+        setImgUrl(URL.createObjectURL(blob));
+      });
+    } else {
+      if (imgUrl) URL.revokeObjectURL(imgUrl);
+      setImgUrl(null);
+    }
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value, showBarcode]);
+
+  const listId = `assigned-${testId}`;
+  return (
+    <div>
+      <div className="relative">
+        <input list={listId} type="text" value={value ?? ""} onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder || "Seriale…"}
+          className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 pr-20 text-sm font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-pink"
+          data-testid={testId} />
+        <datalist id={listId}>
+          {assigned.map((s) => <option key={s.id} value={s.serial}>{s.tipo || ""} {s.assigned_to_name ? `— ${s.assigned_to_name}` : ""}</option>)}
+        </datalist>
+        <button type="button" onClick={() => setShowBarcode(!showBarcode)} disabled={!value}
+          className={`absolute right-1 top-1/2 -translate-y-1/2 mt-0.5 rounded-full p-1.5 text-xs disabled:opacity-30 ${showBarcode ? "bg-brand-pink brand-pink-bg text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
+          title="Mostra barcode + QR" data-testid={`${testId}-toggle-barcode`}>
+          <ScanLine size={12} />
+        </button>
+      </div>
+      {assigned.length > 0 && (
+        <div className="text-[10px] text-slate-400 mt-0.5">📦 {assigned.length} seriale/i assegnati disponibili</div>
+      )}
+      {showBarcode && imgUrl && (
+        <div className="mt-2 rounded-lg border border-pink-200 bg-white p-2" data-testid={`${testId}-barcode-preview`}>
+          <img src={imgUrl} alt={value} className="w-full max-w-xs mx-auto cursor-zoom-in"
+            onClick={() => window.open(imgUrl, "_blank")} />
+          <div className="text-[10px] text-center text-slate-500 mt-1">Tap sull'immagine per ingrandire</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 function PhotoManager({ note, onChanged }) {
   const [uploading, setUploading] = useState(false);
   const [lightbox, setLightbox] = useState(null); // photo object
@@ -956,7 +1028,6 @@ function NoteCard({ note, onChanged, defaultOpen, selected, onToggleSelect, onOp
                   { k: "ts", label: "TS" }, { k: "tc", label: "TC" }, { k: "d", label: "D" },
                   { k: "a", label: "A" },
                   ...((!form.mono_type) ? [{ k: "mono", label: "MONO" }, { k: "internal", label: "INT" }] : []),
-                  { k: "cpe", label: "CPE (seriale modem)" }, { k: "ont_sfp", label: "ONT / SFP" },
                 ].map((f) => (
                   <label key={f.k} className="text-xs font-medium text-slate-600">
                     {f.label}
@@ -966,6 +1037,18 @@ function NoteCard({ note, onChanged, defaultOpen, selected, onToggleSelect, onOp
                       data-testid={`field-${f.k}-${note.wr}`} />
                   </label>
                 ))}
+                <label className="text-xs font-medium text-slate-600 sm:col-span-2">
+                  CPE (seriale modem)
+                  <AssignedSerialInput value={form.cpe} tipoHint="CPE"
+                    onChange={(v) => { setForm({ ...form, cpe: v }); setNoteDirty(false); }}
+                    placeholder="Seleziona da assegnati o digita…" testId={`field-cpe-${note.wr}`} />
+                </label>
+                <label className="text-xs font-medium text-slate-600 sm:col-span-2">
+                  ONT / SFP
+                  <AssignedSerialInput value={form.ont_sfp} tipoHint="ONT"
+                    onChange={(v) => { setForm({ ...form, ont_sfp: v }); setNoteDirty(false); }}
+                    placeholder="Seleziona da assegnati o digita…" testId={`field-ont_sfp-${note.wr}`} />
+                </label>
               </div>
 
               {/* Materiali extra (EXT, ecc.) */}
@@ -980,15 +1063,15 @@ function NoteCard({ note, onChanged, defaultOpen, selected, onToggleSelect, onOp
                 {(form.materials || []).length === 0 && <div className="text-[11px] text-slate-400 italic">Nessun materiale extra</div>}
                 <div className="space-y-2">
                   {(form.materials || []).map((m, i) => (
-                    <div key={i} className="flex gap-2 items-center" data-testid={`material-row-${note.wr}-${i}`}>
+                    <div key={i} className="grid grid-cols-1 sm:grid-cols-[7rem_1fr_auto] gap-2 items-start" data-testid={`material-row-${note.wr}-${i}`}>
                       <input type="text" placeholder="Tipo (es. EXT)" value={m.tipo || ""}
                         onChange={(e) => { const arr = [...(form.materials || [])]; arr[i] = { ...arr[i], tipo: e.target.value }; setForm({ ...form, materials: arr }); setNoteDirty(false); }}
-                        className="w-24 rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold" />
-                      <input type="text" placeholder="Seriale" value={m.serial || ""}
-                        onChange={(e) => { const arr = [...(form.materials || [])]; arr[i] = { ...arr[i], serial: e.target.value }; setForm({ ...form, materials: arr }); setNoteDirty(false); }}
-                        className="flex-1 rounded-lg border border-slate-200 px-2 py-1 text-xs font-mono" />
+                        className="rounded-lg border border-slate-200 px-2 py-2 text-xs font-semibold" />
+                      <AssignedSerialInput value={m.serial} tipoHint={m.tipo}
+                        onChange={(v) => { const arr = [...(form.materials || [])]; arr[i] = { ...arr[i], serial: v }; setForm({ ...form, materials: arr }); setNoteDirty(false); }}
+                        placeholder="Seriale" testId={`material-serial-${note.wr}-${i}`} />
                       <button type="button" onClick={() => { const arr = [...(form.materials || [])]; arr.splice(i, 1); setForm({ ...form, materials: arr }); setNoteDirty(false); }}
-                        className="text-red-500 hover:bg-red-50 rounded-full p-1" data-testid={`remove-material-${note.wr}-${i}`}><X size={14} /></button>
+                        className="text-red-500 hover:bg-red-50 rounded-full p-1 self-center" data-testid={`remove-material-${note.wr}-${i}`}><X size={14} /></button>
                     </div>
                   ))}
                 </div>
@@ -1428,7 +1511,7 @@ function WarehousePage({ onOpenAdmin, showAdminBtn }) {
   const [tags, setTags] = useState([]);
   const [tagStats, setTagStats] = useState({ total: 0, by_tag: [] });
   const [filter, setFilter] = useState("");
-  const [statusFilter, setStatusFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState("in_stock");  // default: home = liberi
   const [tipoFilter, setTipoFilter] = useState("");
   const [inputSerial, setInputSerial] = useState("");
   const [inputTipo, setInputTipo] = useState("");
@@ -1437,6 +1520,7 @@ function WarehousePage({ onOpenAdmin, showAdminBtn }) {
   const [historyItem, setHistoryItem] = useState(null);
   const [editingTipoId, setEditingTipoId] = useState(null);
   const [editingTipoVal, setEditingTipoVal] = useState("");
+  const [selectedIds, setSelectedIds] = useState(new Set());
   const scanRef = useRef(null);
   const [thresholds, setThresholds] = useState([]);
 
@@ -1508,8 +1592,38 @@ function WarehousePage({ onOpenAdmin, showAdminBtn }) {
 
   const del = async (id, s) => {
     if (!window.confirm(`Eliminare seriale ${s}?`)) return;
-    try { await axios.delete(`${API}/inventory/serials/${id}`); toast.success("Eliminato"); fetchSerials(); }
+    try { await axios.delete(`${API}/inventory/serials/${id}`); toast.success("Eliminato"); fetchSerials(); fetchTags(); }
     catch (e) { toast.error(errorText(e)); }
+  };
+
+  const toggleSelect = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+  const selectAllVisible = () => {
+    const ids = serials.map((s) => s.id);
+    setSelectedIds((prev) => prev.size === ids.length ? new Set() : new Set(ids));
+  };
+  const bulkDelete = async () => {
+    if (!selectedIds.size) return;
+    if (!window.confirm(`Eliminare ${selectedIds.size} seriale/i selezionato/i?`)) return;
+    try {
+      const r = await axios.post(`${API}/inventory/serials/bulk-delete`, { ids: Array.from(selectedIds) });
+      toast.success(`${r.data.deleted} seriale/i eliminati`);
+      setSelectedIds(new Set());
+      fetchSerials(); fetchTags();
+    } catch (e) { toast.error(errorText(e)); }
+  };
+  const deleteTag = async (tag) => {
+    if (!window.confirm(`Eliminare il tag "${tag}"? I seriali resteranno ma senza tag.`)) return;
+    try {
+      const r = await axios.post(`${API}/inventory/tags/delete`, { tag });
+      toast.success(`Tag "${tag}" rimosso da ${r.data.updated} seriale/i`);
+      fetchSerials(); fetchTags();
+    } catch (e) { toast.error(errorText(e)); }
   };
 
   const exportCSV = async () => {
@@ -1640,25 +1754,51 @@ function WarehousePage({ onOpenAdmin, showAdminBtn }) {
       )}
 
       <section className="bg-white border border-slate-200 rounded-2xl card-shadow p-4 sm:p-5" data-testid="warehouse-list">
+        <div className="flex gap-1 bg-slate-100 rounded-full p-1 mb-3 w-fit" data-testid="warehouse-tabs">
+          <button onClick={() => setStatusFilter("in_stock")}
+            className={`px-3 py-1.5 rounded-full text-xs font-semibold inline-flex items-center gap-1 transition ${statusFilter === "in_stock" ? "bg-white text-emerald-700 shadow" : "text-slate-500 hover:text-slate-800"}`}
+            data-testid="wh-tab-in_stock">
+            <Package size={12} /> In stock
+          </button>
+          <button onClick={() => setStatusFilter("assegnato")}
+            className={`px-3 py-1.5 rounded-full text-xs font-semibold inline-flex items-center gap-1 transition ${statusFilter === "assegnato" ? "bg-white text-amber-700 shadow" : "text-slate-500 hover:text-slate-800"}`}
+            data-testid="wh-tab-assegnato">
+            <UserCheck size={12} /> Assegnati
+          </button>
+          <button onClick={() => setStatusFilter("scaricato")}
+            className={`px-3 py-1.5 rounded-full text-xs font-semibold inline-flex items-center gap-1 transition ${statusFilter === "scaricato" ? "bg-white text-slate-700 shadow" : "text-slate-500 hover:text-slate-800"}`}
+            data-testid="wh-tab-scaricato">
+            <RefreshCw size={12} /> Scaricati
+          </button>
+          <button onClick={() => setStatusFilter("")}
+            className={`px-3 py-1.5 rounded-full text-xs font-semibold inline-flex items-center gap-1 transition ${statusFilter === "" ? "bg-white text-slate-700 shadow" : "text-slate-500 hover:text-slate-800"}`}
+            data-testid="wh-tab-all">
+            Tutti
+          </button>
+        </div>
         <div className="flex flex-wrap items-center gap-2 mb-3">
           <div className="relative flex-1 min-w-[200px]">
             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Cerca seriale/utente"
               className="w-full pl-9 pr-3 py-2 rounded-full border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-pink" data-testid="warehouse-search" />
           </div>
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="rounded-full border border-slate-200 px-3 py-2 text-sm" data-testid="warehouse-status-filter">
-            <option value="">Tutti gli stati</option>
-            <option value="in_stock">In stock</option>
-            <option value="assegnato">Assegnati</option>
-            <option value="scaricato">Scaricati</option>
-          </select>
           <select value={tipoFilter} onChange={(e) => setTipoFilter(e.target.value)} className="rounded-full border border-slate-200 px-3 py-2 text-sm" data-testid="warehouse-tipo-filter">
             <option value="">Tutti i tag</option>
             {tags.map((t) => <option key={t} value={t}>{t}</option>)}
           </select>
+          {tipoFilter && (
+            <button onClick={() => deleteTag(tipoFilter)} className="rounded-full px-3 py-2 text-xs font-semibold bg-red-50 text-red-700 hover:bg-red-100 inline-flex items-center gap-1.5" data-testid="warehouse-delete-tag">
+              <Trash2 size={14} /> Elimina tag "{tipoFilter}"
+            </button>
+          )}
           <button onClick={exportCSV} className="rounded-full px-3 py-2 text-xs font-semibold bg-slate-900 text-white hover:bg-slate-800 inline-flex items-center gap-1.5" data-testid="warehouse-export-csv">
             <Download size={14} /> Export CSV
           </button>
+          {selectedIds.size > 0 && (
+            <button onClick={bulkDelete} className="rounded-full px-3 py-2 text-xs font-semibold bg-red-600 text-white hover:bg-red-700 inline-flex items-center gap-1.5 animate-pulse" data-testid="warehouse-bulk-delete">
+              <Trash2 size={14} /> Elimina {selectedIds.size} selezionati
+            </button>
+          )}
         </div>
         {loading ? (
           <div className="flex items-center gap-2 text-slate-500 text-sm p-4"><Loader2 className="animate-spin" size={16} /> Caricamento…</div>
@@ -1669,6 +1809,11 @@ function WarehousePage({ onOpenAdmin, showAdminBtn }) {
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-xs text-slate-500 font-semibold border-b border-slate-200">
+                  <th className="py-2 pr-1 w-8">
+                    <input type="checkbox" checked={selectedIds.size > 0 && selectedIds.size === serials.length}
+                      onChange={selectAllVisible}
+                      className="h-4 w-4 rounded border-slate-300 accent-pink-600 cursor-pointer" data-testid="wh-select-all" />
+                  </th>
                   <th className="py-2 pr-2">Seriale</th>
                   <th className="py-2 pr-2">Tag</th>
                   <th className="py-2 pr-2">Stato</th>
@@ -1679,7 +1824,11 @@ function WarehousePage({ onOpenAdmin, showAdminBtn }) {
               </thead>
               <tbody>
                 {serials.map((s) => (
-                  <tr key={s.id} className="border-b border-slate-100 last:border-0" data-testid={`serial-row-${s.serial}`}>
+                  <tr key={s.id} className={`border-b border-slate-100 last:border-0 ${selectedIds.has(s.id) ? "bg-pink-50" : ""}`} data-testid={`serial-row-${s.serial}`}>
+                    <td className="py-2 pr-1">
+                      <input type="checkbox" checked={selectedIds.has(s.id)} onChange={() => toggleSelect(s.id)}
+                        className="h-4 w-4 rounded border-slate-300 accent-pink-600 cursor-pointer" data-testid={`wh-select-${s.serial}`} />
+                    </td>
                     <td className="py-2 pr-2 font-mono text-slate-900">
                       <button onClick={() => setHistoryItem(s)} className="inline-flex items-center gap-1.5 hover:brand-pink hover:underline decoration-dotted underline-offset-2" data-testid={`serial-history-${s.serial}`} title="Vedi storico">
                         <History size={12} className="text-slate-400" /> {s.serial}
@@ -1737,7 +1886,211 @@ function WarehousePage({ onOpenAdmin, showAdminBtn }) {
   );
 }
 
-// ---------- Main app content (authenticated) ----------
+// ---------- Vacations Page (ferie) ----------
+function VacationsPage() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+  const [list, setList] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [reason, setReason] = useState("");
+
+  const fetchList = useCallback(async () => {
+    setLoading(true);
+    try { const r = await axios.get(`${API}/vacations`); setList(r.data || []); }
+    catch (e) { toast.error(errorText(e)); }
+    finally { setLoading(false); }
+  }, []);
+  useEffect(() => { fetchList(); }, [fetchList]);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!from || !to) { toast.error("Compila entrambe le date"); return; }
+    try {
+      await axios.post(`${API}/vacations`, { from_date: from, to_date: to, reason });
+      toast.success("Richiesta inviata all'admin");
+      setFrom(""); setTo(""); setReason(""); fetchList();
+    } catch (e) { toast.error(errorText(e)); }
+  };
+
+  const decide = async (vid, decision) => {
+    const note = decision === "rejected" ? window.prompt("Nota (opzionale) motivo rifiuto:", "") : window.prompt("Nota opzionale:", "");
+    try {
+      await axios.post(`${API}/vacations/${vid}/decision`, { decision, admin_note: note || "" });
+      toast.success(decision === "approved" ? "Ferie approvate" : "Ferie rifiutate");
+      fetchList();
+    } catch (e) { toast.error(errorText(e)); }
+  };
+  const cancel = async (vid) => {
+    if (!window.confirm("Annullare questa richiesta?")) return;
+    try { await axios.delete(`${API}/vacations/${vid}`); toast.success("Annullata"); fetchList(); }
+    catch (e) { toast.error(errorText(e)); }
+  };
+
+  const badgeColor = (s) => s === "approved" ? "bg-emerald-100 text-emerald-800"
+    : s === "rejected" ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800";
+  const badgeLabel = (s) => s === "approved" ? "Approvata" : s === "rejected" ? "Rifiutata" : "In attesa";
+
+  return (
+    <main className="max-w-4xl mx-auto px-4 sm:px-6 py-6 sm:py-10 space-y-6" data-testid="vacations-page">
+      {!isAdmin && (
+        <section className="bg-white border border-slate-200 rounded-2xl card-shadow p-4 sm:p-5">
+          <div className="flex items-center gap-2 mb-3">
+            <Calendar size={18} className="brand-pink" />
+            <h2 className="text-lg font-display font-bold">Nuova richiesta ferie</h2>
+          </div>
+          <form onSubmit={submit} className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+            <label className="text-xs font-medium text-slate-600">
+              Dal
+              <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} required
+                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-pink" data-testid="vacation-from" />
+            </label>
+            <label className="text-xs font-medium text-slate-600">
+              Al
+              <input type="date" value={to} onChange={(e) => setTo(e.target.value)} required
+                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-pink" data-testid="vacation-to" />
+            </label>
+            <button type="submit" className="btn-primary rounded-full px-4 py-2 text-sm font-semibold inline-flex items-center justify-center gap-2" data-testid="vacation-submit">
+              <UserCheck size={14} /> Invia richiesta
+            </button>
+            <label className="text-xs font-medium text-slate-600 sm:col-span-3">
+              Motivo (opzionale)
+              <input type="text" value={reason} onChange={(e) => setReason(e.target.value)}
+                placeholder="Es. matrimonio, medico, ferie estive…"
+                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-pink" data-testid="vacation-reason" />
+            </label>
+          </form>
+        </section>
+      )}
+
+      <section className="bg-white border border-slate-200 rounded-2xl card-shadow p-4 sm:p-5">
+        <div className="flex items-center gap-2 mb-3">
+          <Calendar size={16} />
+          <h2 className="text-base font-display font-bold">{isAdmin ? "Tutte le richieste ferie" : "Le tue richieste"}</h2>
+          <span className="ml-auto text-xs text-slate-500">{list.length}</span>
+        </div>
+        {loading ? (
+          <div className="flex items-center gap-2 text-slate-500 text-sm p-4"><Loader2 className="animate-spin" size={16} /> Caricamento…</div>
+        ) : list.length === 0 ? (
+          <div className="border border-dashed border-slate-200 rounded-xl p-6 text-center text-sm text-slate-400">Nessuna richiesta</div>
+        ) : (
+          <div className="space-y-2">
+            {list.map((v) => (
+              <div key={v.id} className="border border-slate-200 rounded-xl p-3 flex flex-wrap items-center gap-3" data-testid={`vacation-row-${v.id}`}>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold text-slate-900 flex items-center gap-2 flex-wrap">
+                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-bold ${badgeColor(v.status)}`}>{badgeLabel(v.status)}</span>
+                    <span>{v.from_date} → {v.to_date}</span>
+                    {isAdmin && <span className="text-xs text-slate-500 font-normal">· {v.user_name || v.user_email}</span>}
+                  </div>
+                  {v.reason && <div className="text-xs text-slate-600 mt-0.5">💬 {v.reason}</div>}
+                  {v.admin_note && <div className="text-[11px] text-slate-500 mt-0.5">Nota admin: {v.admin_note}</div>}
+                </div>
+                <div className="flex gap-1.5">
+                  {isAdmin && v.status === "pending" && (
+                    <>
+                      <button onClick={() => decide(v.id, "approved")} className="text-xs font-semibold bg-emerald-500 text-white rounded-full px-3 py-1.5 hover:bg-emerald-600" data-testid={`vac-approve-${v.id}`}>Approva</button>
+                      <button onClick={() => decide(v.id, "rejected")} className="text-xs font-semibold bg-red-500 text-white rounded-full px-3 py-1.5 hover:bg-red-600" data-testid={`vac-reject-${v.id}`}>Rifiuta</button>
+                    </>
+                  )}
+                  {(v.status === "pending" || isAdmin) && (
+                    <button onClick={() => cancel(v.id)} className="text-xs font-semibold text-red-600 bg-red-50 rounded-full px-3 py-1.5 hover:bg-red-100" data-testid={`vac-cancel-${v.id}`}>
+                      <Trash2 size={12} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </main>
+  );
+}
+
+// ---------- Admin Dashboard (media giornaliera + giacenza per tecnico) ----------
+function AdminDashboard() {
+  const now = new Date();
+  const todayIso = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString().slice(0, 10);
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+  const [from, setFrom] = useState(monthStart);
+  const [to, setTo] = useState(todayIso);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    try { const r = await axios.get(`${API}/admin/dashboard`, { params: { from, to } }); setData(r.data); }
+    catch (e) { toast.error(errorText(e)); }
+    finally { setLoading(false); }
+  }, [from, to]);
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  return (
+    <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-10 space-y-6" data-testid="admin-dashboard">
+      <section className="bg-white border border-slate-200 rounded-2xl card-shadow p-4 sm:p-5">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Panoramica</div>
+            <h2 className="text-lg sm:text-xl font-display font-bold text-slate-900 mt-0.5">Dashboard Admin</h2>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="rounded-full border border-slate-200 px-3 py-1.5 text-xs" data-testid="dashboard-from" />
+            <span className="text-xs text-slate-400">→</span>
+            <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="rounded-full border border-slate-200 px-3 py-1.5 text-xs" data-testid="dashboard-to" />
+          </div>
+        </div>
+        <div className="mt-3 text-[11px] text-slate-500">Sabati esclusi dal calcolo · Media = espletati+migrazioni / giorni lavorati</div>
+      </section>
+
+      {loading ? (
+        <div className="flex items-center gap-2 text-slate-500 text-sm p-4"><Loader2 className="animate-spin" size={16} /> Caricamento…</div>
+      ) : !data ? null : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {data.users.map((u) => {
+            const maxAvg = Math.max(1, ...data.users.map((x) => x.avg_completed));
+            const pct = (u.avg_completed / maxAvg) * 100;
+            return (
+              <div key={u.id} className="bg-white border border-slate-200 rounded-2xl p-4" data-testid={`user-stat-${u.id}`}>
+                <div className="flex items-center gap-2 mb-2 flex-wrap">
+                  <div className="w-8 h-8 rounded-full bg-brand-pink brand-pink-bg text-white font-bold flex items-center justify-center text-xs">
+                    {(u.name || u.email || "?").charAt(0).toUpperCase()}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-semibold text-slate-900 truncate">{u.name || u.email}</div>
+                    <div className="text-[11px] text-slate-500 truncate">{u.email} · {u.role}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-2xl font-display font-extrabold text-slate-900">{u.avg_completed.toFixed(1)}</div>
+                    <div className="text-[10px] text-slate-500">media/g</div>
+                  </div>
+                </div>
+                <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                  <div className="h-full bg-gradient-to-r from-emerald-400 to-brand-pink brand-pink-bg" style={{ width: `${Math.max(pct, 4)}%` }} />
+                </div>
+                <div className="grid grid-cols-4 gap-2 mt-3 text-center">
+                  <div className="rounded-lg bg-emerald-50 p-2"><div className="text-[10px] text-emerald-700 font-semibold">Espletati</div><div className="text-sm font-bold text-emerald-700">{u.totals.espletato}</div></div>
+                  <div className="rounded-lg bg-amber-50 p-2"><div className="text-[10px] text-amber-700 font-semibold">Sospesi</div><div className="text-sm font-bold text-amber-700">{u.totals.sospeso}</div></div>
+                  <div className="rounded-lg bg-red-50 p-2"><div className="text-[10px] text-red-700 font-semibold">Guasti</div><div className="text-sm font-bold text-red-700">{u.totals.guasto}</div></div>
+                  <div className="rounded-lg bg-indigo-50 p-2"><div className="text-[10px] text-indigo-700 font-semibold">Migraz.</div><div className="text-sm font-bold text-indigo-700">{u.totals.migrazione}</div></div>
+                </div>
+                <div className="mt-3 pt-3 border-t border-slate-100">
+                  <div className="text-[11px] font-semibold text-slate-500 mb-1">Giacenza personale</div>
+                  <div className="flex flex-wrap gap-2 text-[11px]">
+                    <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-800 rounded-full px-2 py-0.5"><Package size={10} /> {u.stock.in_stock} in stock</span>
+                    <span className="inline-flex items-center gap-1 bg-amber-100 text-amber-800 rounded-full px-2 py-0.5"><UserCheck size={10} /> {u.stock.assegnato} assegnati</span>
+                    <span className="inline-flex items-center gap-1 bg-slate-100 text-slate-700 rounded-full px-2 py-0.5"><RefreshCw size={10} /> {u.stock.scaricato} scaricati</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </main>
+  );
+}
 function AppContent() {
   const { user } = useAuth();
   const [notes, setNotes] = useState([]);
@@ -1810,7 +2163,7 @@ function AppContent() {
     closeScanner();
   };
 
-  const canSwitchPage = user?.role === "admin";
+  const canSwitchPage = user?.role === "admin" || user?.role === "user";
   const effectivePage = user?.role === "magazzino" ? "warehouse" : (canSwitchPage ? page : "notes");
 
   return (
@@ -1820,6 +2173,10 @@ function AppContent() {
       <Toaster richColors position="top-center" />
       {effectivePage === "warehouse" ? (
         <WarehousePage onOpenAdmin={() => setAdminOpen(true)} showAdminBtn={user?.role === "admin"} />
+      ) : effectivePage === "vacations" ? (
+        <VacationsPage />
+      ) : effectivePage === "dashboard" && user?.role === "admin" ? (
+        <AdminDashboard />
       ) : (
       <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-10 space-y-6" data-testid="main-content">
         <PdfUploader onParsed={handleParsed} />

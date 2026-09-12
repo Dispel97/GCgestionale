@@ -27,6 +27,27 @@ Web app che automatizza la generazione delle note tecniche OpenFiber a partire d
 - Note status espletato/sospeso (era singolo toggle)
 - File offline standalone HTML per Android
 
+### Iteration 14 (12 Feb 2026) — Fase 3 + Fase 5 + Extra magazzino
+**Fase 3 — Magazzino avanzato**
+- **Tab Stato** nel magazzino: In stock (default homepage) / Assegnati / Scaricati / Tutti (testid `wh-tab-*`).
+- **Bulk delete** con checkbox per riga (`wh-select-{serial}`) + select-all (`wh-select-all`) + pulsante `warehouse-bulk-delete` per eliminare più seriali insieme.
+- **Elimina tag**: `POST /api/inventory/tags/delete` — rimuove il tag da tutti i seriali (rimangono in magazzino senza tag) e cancella la soglia associata. Pulsante `warehouse-delete-tag` compare quando c'è un filtro tag attivo.
+
+**Fase 5 — Ferie**
+- Pagina `nav-vacations` con form richiesta (from/to/motivo) per tecnici e magazzino.
+- Admin vede tutte le richieste con azioni Approva/Rifiuta + nota opzionale.
+- Notifiche automatiche: admin riceve `vacation_request` alla creazione, tecnico riceve `vacation_decision` alla decisione.
+
+**Fase 5 — Admin Dashboard**
+- Nuova pagina `nav-dashboard` (solo admin) con date range.
+- Card per ogni utente approvato: media giornaliera (espletati+migrazioni ÷ giorni lavorati, sabato escluso), 4 contatori (espl./sosp./guast./migr.), giacenza personale (in stock/assegnati/scaricati).
+- Ordinamento per performance (più espletati in cima).
+
+**Note editor — Dropdown seriali assegnati + barcode preview**
+- Nuovo componente `AssignedSerialInput`: input testo con `<datalist>` popolato dalla lista dei seriali assegnati al tecnico o al compagno di squadra (`GET /api/inventory/my-assigned`).
+- Pulsante `field-cpe-{wr}-toggle-barcode` mostra l'immagine generata (barcode CODE128 + QR + testo grande) da tap per ingrandire.
+- Applicato a CPE, ONT/SFP e ai materiali extra (EXT ecc.).
+
 ### Iteration 13 (12 Feb 2026) — Fasi 1+2+4 + Threshold
 **Fase 1 — Workflow note**
 - 4 stati distinti: `espletato` / `sospeso` / `guasto` / `migrazione` (+ `limbo` di default). Le 4 categorie hanno pulsanti separati con colori dedicati e badge nella card.
