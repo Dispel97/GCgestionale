@@ -231,11 +231,28 @@ def parse_openfiber_pdf(pdf_bytes: bytes):
 
         m = re.search(r'Indiriz\.:\s*(.*?)\s+Comune:', d['header']); indirizzo = m.group(1).strip() if m else ''
 
+        # Dati privati (non vanno nella nota copiata)
+        full_text = d['header'] + "\n" + body
+        # Telefono cliente: cerca "Telefono", "Tel.", "Cellulare", "Recapito"
+        m = re.search(r'(?:Telefono|Recapito|Cellulare|Tel\.?)\s*[:\-]?\s*(\+?[\d\s\.\-\/]{6,})', full_text, re.IGNORECASE)
+        phone_client = re.sub(r'[^\d\+]', '', m.group(1)).strip() if m else ''
+        # ID SERVIZIO: pattern AAA + numeri (es. AAA12345)
+        m = re.search(r'\b(AAA\d{4,})\b', full_text)
+        id_servizio = m.group(1) if m else ''
+        # ID RISORSA: cerca "ID Risorsa"/"ID_RISORSA"/"IDRisorsa" seguito da valore alfanumerico
+        m = re.search(r'ID[_ ]?RISORSA[:\s\-]*([A-Z0-9_\-]+)', full_text, re.IGNORECASE)
+        id_risorsa = m.group(1) if m else ''
+        # Password apparato: "PASSWORD APPARATO" / "PWD" / "Password:"
+        m = re.search(r'(?:PASSWORD\s+APPARATO|PWD\s+APPARATO|Password\s+apparato)\s*[:\-]?\s*(\S+)', full_text, re.IGNORECASE)
+        apparato_password = m.group(1) if m else ''
+
         results.append({
             'wr': wr, 'is_numeric': wr.isdigit(),
             'cliente': cliente, 'olo': olo, 'splitter': splitter, 'via': via,
             'nome_pte_raw': nome_pte, 'n_porta_perm': n_pp, 'porta_pte': p_pte,
             'indirizzo': indirizzo,
+            'phone_client': phone_client, 'id_servizio': id_servizio,
+            'id_risorsa': id_risorsa, 'apparato_password': apparato_password,
         })
     return results
 
@@ -636,12 +653,12 @@ async def parse_pdf(file: UploadFile = File(...), user: dict = Depends(get_curre
         raise HTTPException(status_code=400, detail=f"Impossibile leggere il PDF: {e}")
 
     created_notes = []
+    fault_notes = []
     today_iso = datetime.now(timezone.utc).date().isoformat()
     # Detect team partner for shared_with
     partner_ids = await _get_team_partners(user["id"], today_iso)
     for item in parsed:
-        if not item['is_numeric']:
-            continue
+        is_fault = not item['is_numeric']
         note = Note(
             user_id=user["id"],
             shared_with=partner_ids,
@@ -649,17 +666,28 @@ async def parse_pdf(file: UploadFile = File(...), user: dict = Depends(get_curre
             splitter=item['splitter'], via=item['via'],
             n_porta_perm=item['n_porta_perm'], porta_pte=item['porta_pte'],
             indirizzo=item['indirizzo'],
+            phone_client=item.get('phone_client', ''),
+            apparato_password=item.get('apparato_password', ''),
+            id_servizio=item.get('id_servizio', ''),
+            id_risorsa=item.get('id_risorsa', ''),
             pdf_filename=file.filename, pdf_storage_path=pdf_path,
             note_date=today_iso,
+            note_type=('guasto' if is_fault else 'limbo'),
+            status=('guasto' if is_fault else 'limbo'),
         )
         note.note_text = regenerate_note_text(note.model_dump())
         doc = note.model_dump()
         await db.notes.insert_one(dict(doc))
-        created_notes.append(doc)
+        if is_fault:
+            fault_notes.append(doc)
+        else:
+            created_notes.append(doc)
 
-    skipped = [p['wr'] for p in parsed if not p['is_numeric']]
-    return {"created_count": len(created_notes), "skipped_wr": skipped,
-            "notes": created_notes, "pdf_storage_path": pdf_path,
+    return {"created_count": len(created_notes),
+            "fault_count": len(fault_notes),
+            "skipped_wr": [n['wr'] for n in fault_notes],  # legacy field name
+            "notes": created_notes + fault_notes,
+            "pdf_storage_path": pdf_path,
             "pdf_filename": file.filename}
 
 
@@ -1297,6 +1325,40 @@ async def my_assigned(tipo: str = Query(""), user: dict = Depends(get_current_us
         q["tipo"] = tipo
     docs = await db.serials.find(q, {"_id": 0}).sort("assigned_to_name", 1).to_list(500)
     return docs
+
+
+@api_router.post("/inventory/serials/{sid}/return")
+async def return_to_warehouse(sid: str, user: dict = Depends(get_current_user)):
+    """Un tecnico rimette in magazzino un modem non usato (assegnato a lui o al compagno di squadra)."""
+    doc = await db.serials.find_one({"id": sid}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Seriale non trovato")
+    if doc.get("status") == "scaricato":
+        raise HTTPException(status_code=400, detail="Il seriale è già scaricato: non può essere restituito")
+    today_iso = datetime.now(timezone.utc).date().isoformat()
+    partners = await _get_team_partners(user["id"], today_iso)
+    allowed = user.get("role") in ("admin", "magazzino") or doc.get("assigned_to_user_id") in ([user["id"]] + partners)
+    if not allowed:
+        raise HTTPException(status_code=403, detail="Non puoi restituire questo seriale")
+    prev_assignee = doc.get("assigned_to_name", "")
+    now = datetime.now(timezone.utc).isoformat()
+    await db.serials.update_one({"id": sid}, {"$set": {
+        "status": "in_stock",
+        "assigned_to_user_id": "",
+        "assigned_to_name": "",
+        "updated_at": now,
+    }})
+    display_name = user.get("name") or user.get("email") or ""
+    await add_serial_event(doc["serial"], "unassigned", user["id"], display_name,
+                            extra={"reason": "returned_to_warehouse", "from_user_name": prev_assignee})
+    # Notify magazzino
+    await notify_magazzino(
+        "returned",
+        f"🔄 {display_name} ha restituito il modem {doc['serial']} al magazzino",
+        from_user_name=display_name,
+        serials=[doc["serial"]],
+    )
+    return await db.serials.find_one({"id": sid}, {"_id": 0})
 
 
 # ---------- Vacations ----------

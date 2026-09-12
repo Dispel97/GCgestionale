@@ -1,0 +1,25 @@
+{
+  "summary": "Iter15 testing complete. Backend: 4/4 pytest passed (test_iter15.py) covering (a) PDF private-data extraction — phone_client/id_servizio/id_risorsa/apparato_password extracted from a synthetic PDF and persisted on the created note; (b) PDF fault auto-detect — non-numeric WR ('ABC123XYZ') creates a note with note_type='guasto' AND status='guasto'; response includes both new 'fault_count' and legacy 'skipped_wr'; (c) POST /api/inventory/serials/{sid}/return: assignee OK (200, status='in_stock', assignee cleared, 'unassigned' event with reason='returned_to_warehouse' in history, magazzino notification kind='returned' emitted); non-assignee non-admin → 403; already-scaricato → 400; unknown id → 404. Frontend: admin login OK, expanded note reveals private-data-{wr} pill with all 4 private-{phone_client|id_servizio|id_risorsa|apparato_password}-{wr} entries and copy-* buttons (copy toast fires). Edit form 'Dati di lavoro' collapsible contains field-phone_client/apparato_password/id_servizio/id_risorsa-{wr} inputs with correct extracted values. field-cpe-{wr}-open-dropdown and field-ont_sfp-{wr}-open-dropdown testids present; open-dropdown was disabled for CPE because the admin had no assigned CPE serials (expected). Scan button label switches to 'Scansiona → CPE' after focusing field-cpe-{wr} and 'Scansiona → ONT/SFP' after focusing field-ont_sfp-{wr}. Warehouse: wh-tab-assegnato shows return-serial-{serial} button (RotateCcw icon).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter15.py",
+    "/app/test_reports/pytest/iter15.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py now 1599 lines — split into routers (auth/notes/inventory/vacations/dashboard/notifications) is overdue.",
+    "App.js is 2377 lines — extract NoteCard, AssignedSerialInput, WarehousePage into dedicated files.",
+    "parse_openfiber_pdf id_servizio regex `\\b(AAA\\d{4,})\\b` will match any AAA-prefixed token anywhere in the PDF (including inside longer words if word boundary allows) — consider anchoring to a labeled prefix like 'ID SERVIZIO' for fewer false positives.",
+    "phone regex accepts any 6+ char digit-like sequence after 'Telefono/Recapito/Cellulare/Tel.' — could capture numeric OLO IDs, fiscal codes, etc. that follow these words. Consider whitelisting only lines beginning with the label.",
+    "return_to_warehouse: unassigned event 'reason' stored inside 'extra' dict — ensure history GET endpoint preserves that field (this test did not fail but relied on optional history endpoint).",
+    "Notification `notify_magazzino` is broadcast to all admin/magazzino users — no de-dup key, so multiple rapid returns of the same serial produce N identical notifications. Consider dedup on (kind, serial, user_id, minute)."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter15.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin: giuseppe97belviso@gmail.com / Mucchetta4!",
+  "seed_data_creation": "Created 1 test note via /api/pdf/parse (WR 89222467) with all 4 private fields — deleted at end of test. Created 2 test users (test_iter15_*@example.com and test_iter15b_*@example.com) via register+approve — these remain in DB. Created 2 serials with RET15_* tipo during return-to-warehouse test — deleted at end. Installed `reportlab` in venv (required for synthetic PDF generation in backend tests).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter15 features (private data extraction/display, PDF guasto auto-detect, return-to-warehouse, CPE/ONT dropdown menu, scanner auto-compile hint) all working end-to-end. Reportlab now installed in the venv for future PDF tests. Test file /app/backend/tests/test_iter15.py can be reused as regression. Left in DB: test users test_iter15*@example.com (role=user). No serials/notes left behind."
+}

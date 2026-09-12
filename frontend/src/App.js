@@ -597,11 +597,12 @@ function PdfUploader({ onParsed }) {
 }
 
 // ---------- Photo Manager (with camera capture) ----------
-// ---------- Assigned Serial Input (dropdown + barcode preview) ----------
+// ---------- Assigned Serial Input (dropdown a tendina + barcode preview) ----------
 function AssignedSerialInput({ value, onChange, tipoHint, placeholder, testId }) {
   const [assigned, setAssigned] = useState([]);
   const [showBarcode, setShowBarcode] = useState(false);
   const [imgUrl, setImgUrl] = useState(null);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
     axios.get(`${API}/inventory/my-assigned`, { params: tipoHint ? { tipo: tipoHint } : {} })
@@ -625,25 +626,59 @@ function AssignedSerialInput({ value, onChange, tipoHint, placeholder, testId })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value, showBarcode]);
 
-  const listId = `assigned-${testId}`;
+  const pick = (serial) => { onChange(serial); setMenuOpen(false); };
+
   return (
     <div>
-      <div className="relative">
-        <input list={listId} type="text" value={value ?? ""} onChange={(e) => onChange(e.target.value)}
+      <div className="relative flex gap-1">
+        <input type="text" value={value ?? ""} onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder || "Seriale…"}
-          className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 pr-20 text-sm font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-pink"
+          className="flex-1 mt-1 rounded-lg border border-slate-200 bg-white px-3 py-2 pr-2 text-sm font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-pink"
           data-testid={testId} />
-        <datalist id={listId}>
-          {assigned.map((s) => <option key={s.id} value={s.serial}>{s.tipo || ""} {s.assigned_to_name ? `— ${s.assigned_to_name}` : ""}</option>)}
-        </datalist>
+        <button type="button" onClick={() => setMenuOpen(!menuOpen)} disabled={!assigned.length}
+          className="mt-1 rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs font-semibold hover:bg-slate-50 disabled:opacity-40 inline-flex items-center gap-1"
+          title="Scegli dai seriali assegnati" data-testid={`${testId}-open-dropdown`}>
+          <Users size={12} />
+          <span className="hidden sm:inline">{assigned.length}</span>
+          <ChevronDown size={12} />
+        </button>
         <button type="button" onClick={() => setShowBarcode(!showBarcode)} disabled={!value}
-          className={`absolute right-1 top-1/2 -translate-y-1/2 mt-0.5 rounded-full p-1.5 text-xs disabled:opacity-30 ${showBarcode ? "bg-brand-pink brand-pink-bg text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
+          className={`mt-1 rounded-lg px-2 py-2 text-xs font-semibold disabled:opacity-30 ${showBarcode ? "bg-brand-pink brand-pink-bg text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
           title="Mostra barcode + QR" data-testid={`${testId}-toggle-barcode`}>
           <ScanLine size={12} />
         </button>
       </div>
-      {assigned.length > 0 && (
-        <div className="text-[10px] text-slate-400 mt-0.5">📦 {assigned.length} seriale/i assegnati disponibili</div>
+      {menuOpen && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
+          <div className="relative z-50">
+            <div className="absolute right-0 mt-1 w-full max-w-sm bg-white border border-slate-200 rounded-xl shadow-xl max-h-64 overflow-y-auto" data-testid={`${testId}-dropdown-menu`}>
+              <div className="sticky top-0 bg-white border-b border-slate-100 px-3 py-2 flex items-center gap-2">
+                <Users size={12} className="brand-pink" />
+                <span className="text-xs font-semibold text-slate-700">Seriali assegnati alla squadra</span>
+                <span className="ml-auto text-[10px] text-slate-400">{assigned.length}</span>
+              </div>
+              {assigned.length === 0 ? (
+                <div className="p-4 text-xs text-slate-400 text-center italic">Nessun seriale assegnato</div>
+              ) : (
+                <div className="py-1">
+                  {assigned.map((s) => (
+                    <button key={s.id} type="button" onClick={() => pick(s.serial)}
+                      className={`w-full text-left px-3 py-2 text-sm font-mono hover:bg-pink-50 flex items-center gap-2 ${value === s.serial ? "bg-pink-100" : ""}`}
+                      data-testid={`${testId}-option-${s.serial}`}>
+                      <span className="flex-1 truncate">{s.serial}</span>
+                      {s.tipo && <span className="text-[10px] font-bold text-pink-800 bg-pink-100 rounded-full px-1.5 py-0.5">{s.tipo}</span>}
+                      {s.assigned_to_name && <span className="text-[10px] text-slate-500 truncate max-w-[80px]">{s.assigned_to_name}</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+      {assigned.length > 0 && !menuOpen && (
+        <div className="text-[10px] text-slate-400 mt-0.5">📦 {assigned.length} disponibili — apri il menù</div>
       )}
       {showBarcode && imgUrl && (
         <div className="mt-2 rounded-lg border border-pink-200 bg-white p-2" data-testid={`${testId}-barcode-preview`}>
@@ -748,6 +783,7 @@ function NoteCard({ note, onChanged, defaultOpen, selected, onToggleSelect, onOp
   const [noteDraft, setNoteDraft] = useState(note.note_text || composeNote(note));
   const [noteDirty, setNoteDirty] = useState(false);
   const [sending, setSending] = useState(false);
+  const [lastField, setLastField] = useState(null); // "cpe" | "ont_sfp"
 
   useEffect(() => {
     setForm(note);
@@ -974,8 +1010,8 @@ function NoteCard({ note, onChanged, defaultOpen, selected, onToggleSelect, onOp
             <button onClick={syncNote} className="rounded-full px-3 py-2 text-xs font-semibold bg-emerald-100 text-emerald-800 hover:bg-emerald-200 inline-flex items-center gap-2" data-testid={`sync-note-${note.wr}`}>
               <RefreshCw size={14} /> Sincronizza magazzino
             </button>
-            <button onClick={() => onOpenScanner(applyScan)} className="rounded-full px-3 py-2 text-xs font-semibold bg-brand-pink/10 text-brand-pink brand-pink inline-flex items-center gap-2 hover:bg-brand-pink/20" data-testid={`scan-serial-${note.wr}`}>
-              <ScanLine size={14} /> Scansiona seriale
+            <button onClick={() => onOpenScanner(applyScan, lastField)} className="rounded-full px-3 py-2 text-xs font-semibold bg-brand-pink/10 text-brand-pink brand-pink inline-flex items-center gap-2 hover:bg-brand-pink/20" data-testid={`scan-serial-${note.wr}`}>
+              <ScanLine size={14} /> Scansiona {lastField === "cpe" ? "→ CPE" : lastField === "ont_sfp" ? "→ ONT/SFP" : "seriale"}
             </button>
             {note.pdf_storage_path ? (
               <a href={`${API}/files?path=${encodeURIComponent(note.pdf_storage_path)}`} target="_blank" rel="noopener noreferrer"
@@ -994,6 +1030,38 @@ function NoteCard({ note, onChanged, defaultOpen, selected, onToggleSelect, onOp
           <div className="mt-2 text-[11px] text-slate-500 leading-relaxed">
             <strong>Suggerimento:</strong> "Scansiona seriale" apre la fotocamera per leggere codici a barre/QR del modem. "Scatta foto" apre la fotocamera per allegare foto alla nota.
           </div>
+
+          {/* Dati privati SEMPRE visibili (non finiscono nella nota) */}
+          {(note.phone_client || note.apparato_password || note.id_servizio || note.id_risorsa) && (
+            <div className="mt-3 rounded-xl bg-slate-50 border border-slate-200 p-3" data-testid={`private-data-${note.wr}`}>
+              <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-1.5 flex items-center gap-1">
+                🔒 Dati di lavoro (non nella nota)
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {[
+                  { k: "phone_client", label: "Telefono cliente", isTel: true },
+                  { k: "id_servizio", label: "ID SERVIZIO" },
+                  { k: "id_risorsa", label: "ID RISORSA" },
+                  { k: "apparato_password", label: "Password" },
+                ].map((f) => note[f.k] ? (
+                  <div key={f.k} className="min-w-0" data-testid={`private-${f.k}-${note.wr}`}>
+                    <div className="text-[10px] text-slate-500 font-semibold">{f.label}</div>
+                    <div className="flex items-center gap-1 mt-0.5">
+                      {f.isTel ? (
+                        <a href={`tel:${note[f.k]}`} className="text-xs font-mono font-semibold text-brand-pink brand-pink hover:underline truncate">{note[f.k]}</a>
+                      ) : (
+                        <span className="text-xs font-mono font-semibold text-slate-900 truncate">{note[f.k]}</span>
+                      )}
+                      <button onClick={() => { navigator.clipboard.writeText(note[f.k]); toast.success(`${f.label} copiato`); }}
+                        className="text-slate-400 hover:text-slate-800 shrink-0" data-testid={`copy-${f.k}-${note.wr}`} title="Copia">
+                        <Copy size={11} />
+                      </button>
+                    </div>
+                  </div>
+                ) : null)}
+              </div>
+            </div>
+          )}
 
           {edit && (
             <div className="mt-4 space-y-4" data-testid={`edit-form-${note.wr}`}>
@@ -1037,16 +1105,16 @@ function NoteCard({ note, onChanged, defaultOpen, selected, onToggleSelect, onOp
                       data-testid={`field-${f.k}-${note.wr}`} />
                   </label>
                 ))}
-                <label className="text-xs font-medium text-slate-600 sm:col-span-2">
+                <label className="text-xs font-medium text-slate-600 sm:col-span-2" onFocus={() => setLastField("cpe")}>
                   CPE (seriale modem)
                   <AssignedSerialInput value={form.cpe} tipoHint="CPE"
-                    onChange={(v) => { setForm({ ...form, cpe: v }); setNoteDirty(false); }}
+                    onChange={(v) => { setForm({ ...form, cpe: v }); setNoteDirty(false); setLastField("cpe"); }}
                     placeholder="Seleziona da assegnati o digita…" testId={`field-cpe-${note.wr}`} />
                 </label>
-                <label className="text-xs font-medium text-slate-600 sm:col-span-2">
+                <label className="text-xs font-medium text-slate-600 sm:col-span-2" onFocus={() => setLastField("ont_sfp")}>
                   ONT / SFP
                   <AssignedSerialInput value={form.ont_sfp} tipoHint="ONT"
-                    onChange={(v) => { setForm({ ...form, ont_sfp: v }); setNoteDirty(false); }}
+                    onChange={(v) => { setForm({ ...form, ont_sfp: v }); setNoteDirty(false); setLastField("ont_sfp"); }}
                     placeholder="Seleziona da assegnati o digita…" testId={`field-ont_sfp-${note.wr}`} />
                 </label>
               </div>
@@ -1590,6 +1658,15 @@ function WarehousePage({ onOpenAdmin, showAdminBtn }) {
     } catch (e) { toast.error(errorText(e)); }
   };
 
+  const returnToWarehouse = async (id, s) => {
+    if (!window.confirm(`Restituire il modem ${s} al magazzino?`)) return;
+    try {
+      await axios.post(`${API}/inventory/serials/${id}/return`);
+      toast.success(`${s} tornato in magazzino`);
+      fetchSerials(); fetchTags();
+    } catch (e) { toast.error(errorText(e)); }
+  };
+
   const del = async (id, s) => {
     if (!window.confirm(`Eliminare seriale ${s}?`)) return;
     try { await axios.delete(`${API}/inventory/serials/${id}`); toast.success("Eliminato"); fetchSerials(); fetchTags(); }
@@ -1872,6 +1949,11 @@ function WarehousePage({ onOpenAdmin, showAdminBtn }) {
                       ) : "—"}
                     </td>
                     <td className="py-2 text-right">
+                      {s.status === "assegnato" && (
+                        <button onClick={() => returnToWarehouse(s.id, s.serial)} className="text-amber-700 hover:bg-amber-50 rounded-full p-1.5 mr-1" data-testid={`return-serial-${s.serial}`} title="Restituisci a magazzino">
+                          <RotateCcw size={14} />
+                        </button>
+                      )}
                       <button onClick={() => del(s.id, s.serial)} className="text-red-600 hover:bg-red-50 rounded-full p-1.5" data-testid={`delete-serial-${s.serial}`}><Trash2 size={14} /></button>
                     </td>
                   </tr>
@@ -2156,7 +2238,7 @@ function AppContent() {
     } catch (e) { toast.error(errorText(e)); }
   };
 
-  const openScanner = (onScan) => { setScanner({ onScan }); setScanTarget(null); };
+  const openScanner = (onScan, hintTarget) => { setScanner({ onScan }); setScanTarget(hintTarget || null); };
   const closeScanner = () => { setScanner(null); setScanTarget(null); };
   const handleScan = (value, target, snapshot) => {
     scanner?.onScan?.(value, target, snapshot);

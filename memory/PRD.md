@@ -27,6 +27,13 @@ Web app che automatizza la generazione delle note tecniche OpenFiber a partire d
 - Note status espletato/sospeso (era singolo toggle)
 - File offline standalone HTML per Android
 
+### Iteration 15 (12 Feb 2026) — Polish avanzato
+- **Dropdown vero per seriali assegnati** (non più `<datalist>`): pulsante `open-dropdown` apre menù cliccabile con chip per tag e nome tecnico, click su una voce compila il campo.
+- **Dati privati estratti automaticamente dal PDF** (telefono cliente, ID SERVIZIO `AAA\d{4,}`, ID RISORSA, password apparato) e mostrati **in cima alla nota espansa** (`private-data-{wr}`) con click-to-copy e link `tel:` sul telefono.
+- **Restituisci a magazzino**: pulsante `return-serial-{serial}` nel tab Assegnati (icona RotateCcw). Nuovo endpoint `POST /api/inventory/serials/{sid}/return` che ripristina `status='in_stock'`, aggiunge evento `unassigned` con `reason='returned_to_warehouse'`, notifica il magazzino.
+- **Scanner auto-compile**: NoteCard traccia `lastField` (cpe/ont_sfp) sul focus/onChange, e passa il target come hint al ScannerModal. Etichetta del pulsante diventa `Scansiona → CPE` (o `→ ONT/SFP`) — nessuna domanda in più.
+- **Guasto Auto-Detect**: le WR non numeriche vengono ora create come note con `note_type='guasto'` invece di essere scartate. Nella response del parse: nuovo campo `fault_count` (retrocompatibile con `skipped_wr`).
+
 ### Iteration 14 (12 Feb 2026) — Fase 3 + Fase 5 + Extra magazzino
 **Fase 3 — Magazzino avanzato**
 - **Tab Stato** nel magazzino: In stock (default homepage) / Assegnati / Scaricati / Tutti (testid `wh-tab-*`).
