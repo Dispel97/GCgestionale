@@ -243,12 +243,40 @@ def parse_openfiber_pdf(pdf_bytes: bytes):
 def compose_note(cliente, olo, splitter, via, n_porta_perm, porta_pte,
                  cpe='', ont_sfp='', wr='',
                  pte_est='PTE-EST', ts='TS', tc='TC', d='D', a='A',
-                 mono='MONO', internal='INT'):
-    parts = [splitter, via, pte_est, f"PFS {n_porta_perm}", f"PTE {porta_pte}",
-             ts, tc, d, a, mono, internal]
-    tech = " ".join([str(p) for p in parts if p is not None and str(p).strip() != ''])
-    return (f"WR: {wr}\n{(cliente or '').lower()}\n{olo}\n{tech}\n"
-            f"CPE: {cpe}\n(ONT/SFP): {ont_sfp}")
+                 mono_type='', mono='MONO', internal='INT',
+                 materials=None):
+    """Generate note text. Empty fields are skipped. `mono_type` (unified MONO INT / MONO EST / SBR / VRT STR SBR)
+    takes precedence over legacy mono+internal pair."""
+    parts = []
+    def add(v):
+        if v is not None and str(v).strip():
+            parts.append(str(v).strip())
+    add(splitter); add(via); add(pte_est)
+    if n_porta_perm: parts.append(f"PFS {n_porta_perm}")
+    if porta_pte:    parts.append(f"PTE {porta_pte}")
+    add(ts); add(tc); add(d); add(a)
+    if mono_type and mono_type.strip():
+        parts.append(mono_type.strip())
+    else:
+        if mono and str(mono).strip(): parts.append(str(mono).strip())
+        if internal and str(internal).strip(): parts.append(str(internal).strip())
+    tech = " ".join(parts)
+
+    lines = [f"WR: {wr}"]
+    if cliente and cliente.strip(): lines.append(cliente.strip().lower())
+    if olo and str(olo).strip():    lines.append(str(olo).strip())
+    if tech:                        lines.append(tech)
+    if cpe and cpe.strip():         lines.append(f"CPE: {cpe.strip()}")
+    if ont_sfp and str(ont_sfp).strip(): lines.append(f"(ONT/SFP): {ont_sfp.strip()}")
+    # Additional materials (EXT, etc.)
+    for m in (materials or []):
+        tipo = (m.get('tipo') or '').strip() if isinstance(m, dict) else ''
+        ser = (m.get('serial') or '').strip() if isinstance(m, dict) else ''
+        if tipo and ser:
+            lines.append(f"{tipo}: {ser}")
+        elif tipo:
+            lines.append(f"{tipo}:")
+    return "\n".join(lines)
 
 
 def regenerate_note_text(doc):
@@ -257,7 +285,9 @@ def regenerate_note_text(doc):
         doc.get('via', ''), doc.get('n_porta_perm', ''), doc.get('porta_pte', ''),
         doc.get('cpe', ''), doc.get('ont_sfp', ''), doc.get('wr', ''),
         doc.get('pte_est', 'PTE-EST'), doc.get('ts', 'TS'), doc.get('tc', 'TC'),
-        doc.get('d', 'D'), doc.get('a', 'A'), doc.get('mono', 'MONO'), doc.get('internal', 'INT'),
+        doc.get('d', 'D'), doc.get('a', 'A'),
+        doc.get('mono_type', ''), doc.get('mono', ''), doc.get('internal', ''),
+        doc.get('materials', []),
     )
 
 
@@ -269,10 +299,17 @@ class Photo(BaseModel):
     content_type: str
 
 
+class Material(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    tipo: str = ''
+    serial: str = ''
+
+
 class Note(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     user_id: str = ''
+    shared_with: List[str] = Field(default_factory=list)  # user_ids of team partners for the day
     wr: str
     cliente: str = ''
     olo: str = ''
@@ -286,13 +323,23 @@ class Note(BaseModel):
     pte_est: str = 'PTE-EST'
     ts: str = 'TS'; tc: str = 'TC'; d: str = 'D'; a: str = 'A'
     mono: str = 'MONO'; internal: str = 'INT'
+    mono_type: str = ''  # "MONO INT" | "MONO EST" | "SBR" | "VRT STR SBR"
+    materials: List[Material] = Field(default_factory=list)  # extra materials (EXT etc.)
+    # Private work fields — NOT included in note_text
+    phone_client: str = ''
+    apparato_password: str = ''
+    id_servizio: str = ''
+    id_risorsa: str = ''
     note_text: str = ''
     note_text_manual: bool = False
     photos: List[Photo] = Field(default_factory=list)
     pdf_filename: str = ''
     pdf_storage_path: str = ''
-    status: str = 'espletato'  # espletato | sospeso
+    # note_type: limbo (nuova, non conteggiata) | espletato | sospeso | guasto | migrazione
+    note_type: str = 'limbo'
+    status: str = 'limbo'  # legacy alias; kept for backward compat with UI toggles
     suspend_reason: str = ''
+    note_date: str = ''  # ISO date (YYYY-MM-DD), user-editable; default = date of creation
     synced: bool = False
     synced_at: str = ''
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -313,10 +360,18 @@ class NoteUpdate(BaseModel):
     ts: Optional[str] = None; tc: Optional[str] = None
     d: Optional[str] = None; a: Optional[str] = None
     mono: Optional[str] = None; internal: Optional[str] = None
+    mono_type: Optional[str] = None
+    materials: Optional[List[Material]] = None
+    phone_client: Optional[str] = None
+    apparato_password: Optional[str] = None
+    id_servizio: Optional[str] = None
+    id_risorsa: Optional[str] = None
     note_text: Optional[str] = None
     note_text_manual: Optional[bool] = None
     status: Optional[str] = None
+    note_type: Optional[str] = None
     suspend_reason: Optional[str] = None
+    note_date: Optional[str] = None
 
 
 class BulkDeleteRequest(BaseModel):
@@ -336,6 +391,31 @@ class LoginRequest(BaseModel):
 
 class ApproveRequest(BaseModel):
     role: Optional[str] = "user"  # "user" | "magazzino"
+
+
+class TeamRequest(BaseModel):
+    partner_user_id: Optional[str] = ""  # empty string clears the partnership
+    date: Optional[str] = None  # YYYY-MM-DD; default = today
+
+
+class TagThreshold(BaseModel):
+    tag: str
+    threshold: int = 0  # 0 = disabled
+
+
+class SuspendEmailRequest(BaseModel):
+    to: EmailStr
+
+
+async def _get_team_partners(user_id: str, date_iso: str) -> List[str]:
+    """Return list of partner user_ids for the given user on the given date (bidirectional)."""
+    partners = set()
+    async for t in db.teams.find({"date": date_iso}):
+        if t.get("primary_user_id") == user_id and t.get("partner_user_id"):
+            partners.add(t["partner_user_id"])
+        if t.get("partner_user_id") == user_id and t.get("primary_user_id"):
+            partners.add(t["primary_user_id"])
+    return list(partners)
 
 
 class SerialItem(BaseModel):
@@ -541,16 +621,21 @@ async def parse_pdf(file: UploadFile = File(...), user: dict = Depends(get_curre
         raise HTTPException(status_code=400, detail=f"Impossibile leggere il PDF: {e}")
 
     created_notes = []
+    today_iso = datetime.now(timezone.utc).date().isoformat()
+    # Detect team partner for shared_with
+    partner_ids = await _get_team_partners(user["id"], today_iso)
     for item in parsed:
         if not item['is_numeric']:
             continue
         note = Note(
             user_id=user["id"],
+            shared_with=partner_ids,
             wr=item['wr'], cliente=item['cliente'], olo=item['olo'],
             splitter=item['splitter'], via=item['via'],
             n_porta_perm=item['n_porta_perm'], porta_pte=item['porta_pte'],
             indirizzo=item['indirizzo'],
             pdf_filename=file.filename, pdf_storage_path=pdf_path,
+            note_date=today_iso,
         )
         note.note_text = regenerate_note_text(note.model_dump())
         doc = note.model_dump()
@@ -565,19 +650,94 @@ async def parse_pdf(file: UploadFile = File(...), user: dict = Depends(get_curre
 
 @api_router.get("/notes")
 async def list_notes(search: str = Query(''), user: dict = Depends(get_current_user)):
-    q = {"user_id": user["id"]}
+    q = {"$or": [{"user_id": user["id"]}, {"shared_with": user["id"]}]}
     if search:
         rx = {"$regex": re.escape(search), "$options": "i"}
         q = {"$and": [q, {"$or": [{"wr": rx}, {"cliente": rx}, {"olo": rx}]}]}
-    docs = await db.notes.find(q, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    docs = await db.notes.find(q, {"_id": 0}).sort("created_at", -1).to_list(2000)
+    # Legacy migration: fill note_type/note_date defaults
+    for d in docs:
+        if not d.get('note_type'):
+            legacy = d.get('status', 'limbo')
+            d['note_type'] = legacy if legacy in ('espletato', 'sospeso', 'guasto', 'migrazione') else 'limbo'
+        if not d.get('note_date'):
+            d['note_date'] = (d.get('created_at') or '')[:10]
     return docs
 
 
 async def _get_own_note(note_id: str, user: dict) -> dict:
-    doc = await db.notes.find_one({"id": note_id, "user_id": user["id"]}, {"_id": 0})
+    doc = await db.notes.find_one(
+        {"id": note_id, "$or": [{"user_id": user["id"]}, {"shared_with": user["id"]}]},
+        {"_id": 0}
+    )
     if not doc:
         raise HTTPException(status_code=404, detail="Nota non trovata")
     return doc
+
+
+# ---------- Notes stats (per data range, esclude sabati) ----------
+def _daterange(start_iso: str, end_iso: str):
+    from datetime import date, timedelta
+    s = date.fromisoformat(start_iso); e = date.fromisoformat(end_iso)
+    cur = s
+    while cur <= e:
+        yield cur
+        cur = cur + timedelta(days=1)
+
+
+@api_router.get("/notes/stats")
+async def notes_stats(
+    from_date: str = Query("", alias="from"),
+    to_date: str = Query("", alias="to"),
+    user: dict = Depends(get_current_user),
+):
+    from datetime import date, timedelta
+    today = datetime.now(timezone.utc).date()
+    if not from_date: from_date = today.replace(day=1).isoformat()
+    if not to_date: to_date = today.isoformat()
+    q = {"$or": [{"user_id": user["id"]}, {"shared_with": user["id"]}]}
+    docs = await db.notes.find(q, {"_id": 0, "note_type": 1, "status": 1, "note_date": 1, "created_at": 1}).to_list(20000)
+
+    def _classify(d):
+        t = d.get('note_type') or d.get('status') or 'limbo'
+        return t if t in ('espletato', 'sospeso', 'guasto', 'migrazione') else 'limbo'
+
+    def _get_date(d):
+        return (d.get('note_date') or (d.get('created_at') or '')[:10])
+
+    tot = {"limbo": 0, "espletato": 0, "sospeso": 0, "guasto": 0, "migrazione": 0}
+    by_day = {}
+    for d in docs:
+        dt = _get_date(d)
+        if not dt: continue
+        if dt < from_date or dt > to_date: continue
+        c = _classify(d)
+        tot[c] = tot.get(c, 0) + 1
+        by_day.setdefault(dt, {"limbo": 0, "espletato": 0, "sospeso": 0, "guasto": 0, "migrazione": 0})
+        by_day[dt][c] = by_day[dt].get(c, 0) + 1
+
+    counted_days = [d for d in _daterange(from_date, to_date) if d.weekday() != 5]
+    total_completed = tot.get("espletato", 0) + tot.get("migrazione", 0)
+    total_faults = tot.get("guasto", 0)
+    avg_completed = round(total_completed / max(len(counted_days), 1), 2)
+    avg_faults = round(total_faults / max(len(counted_days), 1), 2)
+
+    daily = []
+    for d in _daterange(from_date, to_date):
+        iso = d.isoformat()
+        entry = by_day.get(iso, {"limbo": 0, "espletato": 0, "sospeso": 0, "guasto": 0, "migrazione": 0})
+        entry["date"] = iso
+        entry["is_saturday"] = d.weekday() == 5
+        daily.append(entry)
+
+    return {
+        "from": from_date, "to": to_date,
+        "totals": tot,
+        "avg_completed_per_working_day": avg_completed,
+        "avg_faults_per_working_day": avg_faults,
+        "working_days_count": len(counted_days),
+        "daily": daily,
+    }
 
 
 @api_router.get("/notes/{note_id}")
@@ -589,6 +749,14 @@ async def get_note(note_id: str, user: dict = Depends(get_current_user)):
 async def update_note(note_id: str, upd: NoteUpdate, user: dict = Depends(get_current_user)):
     doc = await _get_own_note(note_id, user)
     updates = {k: v for k, v in upd.model_dump().items() if v is not None}
+    # Convert Material Pydantic objects → dict
+    if 'materials' in updates:
+        updates['materials'] = [m.model_dump() if hasattr(m, 'model_dump') else m for m in updates['materials']]
+    # Sync legacy status <-> note_type
+    if 'note_type' in updates and 'status' not in updates:
+        updates['status'] = updates['note_type']
+    elif 'status' in updates and 'note_type' not in updates:
+        updates['note_type'] = updates['status']
     if 'note_text' in updates:
         doc.update(updates)
         doc['note_text_manual'] = updates.get('note_text_manual', True)
@@ -697,9 +865,29 @@ async def list_serials(
 
 @api_router.post("/inventory/serials")
 async def create_serial(req: SerialCreate, user: dict = Depends(get_magazzino_or_admin)):
-    serial = (req.serial or "").strip()
-    if not serial:
+    raw = (req.serial or "").strip()
+    if not raw:
         raise HTTPException(status_code=400, detail="Seriale richiesto")
+    # Split by whitespace/commas/semicolons/newlines → multi-serial paste
+    tokens = [t.strip() for t in re.split(r"[\s,;]+", raw) if t.strip()]
+    if len(tokens) > 1:
+        created, skipped = [], []
+        tipo = (req.tipo or "").strip()
+        actor_name = user.get("name") or user.get("email") or ""
+        for s in tokens:
+            if await db.serials.find_one({"serial": s}):
+                skipped.append(s); continue
+            item = SerialItem(serial=s, tipo=tipo)
+            await db.serials.insert_one(dict(item.model_dump()))
+            await add_serial_event(s, "created", user["id"], actor_name,
+                                    extra={"tipo": tipo, "multi_paste": True})
+            created.append(s)
+        if tipo:
+            try: await _check_threshold(tipo, actor_name=actor_name)
+            except Exception: pass
+        return {"multi": True, "created": created, "skipped": skipped, "created_count": len(created)}
+
+    serial = tokens[0]
     if await db.serials.find_one({"serial": serial}):
         raise HTTPException(status_code=400, detail="Seriale già presente")
     item = SerialItem(serial=serial, tipo=(req.tipo or "").strip(), note=req.note or "")
@@ -718,6 +906,9 @@ async def create_serial(req: SerialCreate, user: dict = Depends(get_magazzino_or
         await add_serial_event(serial, "assigned", user["id"], actor_name,
                                 extra={"to_user_id": item.assigned_to_user_id,
                                        "to_user_name": item.assigned_to_name})
+    if item.tipo:
+        try: await _check_threshold(item.tipo, actor_name=actor_name)
+        except Exception: pass
     return doc
 
 
@@ -788,6 +979,8 @@ async def delete_serial(sid: str, user: dict = Depends(get_magazzino_or_admin)):
     if doc and res.deleted_count:
         actor_name = user.get("name") or user.get("email") or ""
         await add_serial_event(doc["serial"], "deleted", user["id"], actor_name)
+        try: await _check_threshold(doc.get("tipo") or "", actor_name=actor_name)
+        except Exception: pass
     return {"deleted": res.deleted_count}
 
 
@@ -875,12 +1068,14 @@ async def sync_note_serials(note_id: str, user: dict = Depends(get_current_user)
     synced_serials = []
     now_iso = datetime.now(timezone.utc).isoformat()
     display_name = user.get("name") or user.get("email") or user.get("id")
+    olo_val = (doc.get("olo") or "").strip()
     for field, tipo in (("cpe", "CPE"), ("ont_sfp", "ONT")):
         raw = (doc.get(field) or "").strip()
         if not raw:
             continue
         existing = await db.serials.find_one({"serial": raw})
         if existing:
+            existing_tipo = existing.get("tipo") or tipo
             await db.serials.update_one(
                 {"id": existing["id"]},
                 {"$set": {
@@ -888,23 +1083,35 @@ async def sync_note_serials(note_id: str, user: dict = Depends(get_current_user)
                     "downloaded_by_user_id": user["id"],
                     "downloaded_by_name": display_name,
                     "downloaded_at": now_iso,
+                    "downloaded_olo": olo_val,
+                    "downloaded_note_wr": doc.get("wr", ""),
+                    "downloaded_note_id": doc.get("id", ""),
                     "updated_at": now_iso,
                 }},
             )
+            tipo_for_event = existing_tipo
         else:
             item = SerialItem(
                 serial=raw, tipo=tipo, status="scaricato",
                 downloaded_by_user_id=user["id"], downloaded_by_name=display_name,
                 downloaded_at=now_iso,
             )
-            await db.serials.insert_one(dict(item.model_dump()))
+            d_ins = dict(item.model_dump())
+            d_ins["downloaded_olo"] = olo_val
+            d_ins["downloaded_note_wr"] = doc.get("wr", "")
+            d_ins["downloaded_note_id"] = doc.get("id", "")
+            await db.serials.insert_one(d_ins)
             await add_serial_event(raw, "created", user["id"], display_name,
                                     extra={"tipo": tipo, "auto_from_sync": True})
+            tipo_for_event = tipo
         await add_serial_event(raw, "downloaded", user["id"], display_name,
                                 note_id=doc.get("id", ""), note_wr=doc.get("wr", ""),
-                                extra={"tipo": tipo})
+                                extra={"tipo": tipo_for_event, "olo": olo_val})
         synced_serials.append(raw)
         updates_count += 1
+        # Threshold check for this tag
+        try: await _check_threshold(tipo_for_event, actor_name=display_name)
+        except Exception: pass
     await db.notes.update_one({"id": note_id},
                               {"$set": {"synced": True, "synced_at": now_iso, "updated_at": now_iso}})
     if synced_serials:
@@ -914,6 +1121,122 @@ async def sync_note_serials(note_id: str, user: dict = Depends(get_current_user)
                                 note_id=note_id, note_wr=wr, serials=synced_serials)
     fresh = await db.notes.find_one({"id": note_id}, {"_id": 0})
     return {"synced": updates_count, "note": fresh}
+
+
+# ---------- Notifications ----------
+# ---------- Team (compagno di squadra giornaliero) ----------
+@api_router.get("/team/today")
+async def team_today(date: str = Query(""), user: dict = Depends(get_current_user)):
+    d = date or datetime.now(timezone.utc).date().isoformat()
+    t = await db.teams.find_one({"primary_user_id": user["id"], "date": d}, {"_id": 0})
+    partners = await _get_team_partners(user["id"], d)
+    partner_info = None
+    if partners:
+        p = await db.users.find_one({"id": partners[0]}, {"_id": 0, "id": 1, "email": 1, "name": 1})
+        partner_info = p
+    return {"date": d, "record": t, "partner": partner_info, "partner_ids": partners}
+
+
+@api_router.post("/team/today")
+async def set_team_today(req: TeamRequest, user: dict = Depends(get_current_user)):
+    d = req.date or datetime.now(timezone.utc).date().isoformat()
+    # Clear existing partnerships owned by me for that day (only 1 partner per day per direction)
+    await db.teams.delete_many({"primary_user_id": user["id"], "date": d})
+    partner_ids: List[str] = []
+    if req.partner_user_id:
+        partner = await db.users.find_one({"id": req.partner_user_id})
+        if not partner:
+            raise HTTPException(status_code=400, detail="Compagno non trovato")
+        if partner["id"] == user["id"]:
+            raise HTTPException(status_code=400, detail="Non puoi selezionare te stesso")
+        await db.teams.insert_one({
+            "id": str(uuid.uuid4()),
+            "primary_user_id": user["id"],
+            "partner_user_id": partner["id"],
+            "date": d,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+        partner_ids = [partner["id"]]
+    # Recompute shared_with on today's notes (both directions)
+    all_partners = await _get_team_partners(user["id"], d)
+    await db.notes.update_many(
+        {"user_id": user["id"], "note_date": d},
+        {"$set": {"shared_with": all_partners}}
+    )
+    return {"ok": True, "partner_ids": partner_ids}
+
+
+@api_router.get("/users/approved")
+async def list_approved_users(user: dict = Depends(get_current_user)):
+    docs = await db.users.find(
+        {"is_approved": True, "id": {"$ne": user["id"]}},
+        {"_id": 0, "id": 1, "email": 1, "name": 1, "role": 1}
+    ).sort("email", 1).to_list(500)
+    return docs
+
+
+# ---------- Sospesi: invio mail ----------
+@api_router.post("/notes/{note_id}/send-suspend-email")
+async def send_suspend_email(note_id: str, req: SuspendEmailRequest, user: dict = Depends(get_current_user)):
+    doc = await _get_own_note(note_id, user)
+    if (doc.get('note_type') or doc.get('status')) != 'sospeso':
+        raise HTTPException(status_code=400, detail="La nota non è sospesa")
+    body = {
+        "to": str(req.to),
+        "subject": f"Nota sospesa - WR {doc.get('wr','')} - OLO {doc.get('olo','')}",
+        "body": f"Codice OLO: {doc.get('olo','')}\nCodice WR: {doc.get('wr','')}\nMotivo sospensione: {doc.get('suspend_reason','')}\n",
+    }
+    return body  # Client-side handled via mailto: — return prepared fields
+
+
+# ---------- Warehouse Thresholds ----------
+@api_router.get("/inventory/thresholds")
+async def list_thresholds(user: dict = Depends(get_magazzino_or_admin)):
+    docs = await db.tag_thresholds.find({}, {"_id": 0}).sort("tag", 1).to_list(500)
+    return docs
+
+
+@api_router.post("/inventory/thresholds")
+async def set_threshold(req: TagThreshold, user: dict = Depends(get_magazzino_or_admin)):
+    tag = (req.tag or "").strip()
+    if not tag:
+        raise HTTPException(status_code=400, detail="Tag richiesto")
+    thr = max(0, int(req.threshold or 0))
+    now = datetime.now(timezone.utc).isoformat()
+    if thr == 0:
+        await db.tag_thresholds.delete_one({"tag": tag})
+        return {"tag": tag, "threshold": 0}
+    await db.tag_thresholds.update_one(
+        {"tag": tag},
+        {"$set": {"tag": tag, "threshold": thr, "updated_at": now}},
+        upsert=True,
+    )
+    await _check_threshold(tag, actor_name=(user.get('name') or user.get('email') or ''))
+    return {"tag": tag, "threshold": thr}
+
+
+async def _check_threshold(tag: str, actor_name: str = ""):
+    """If tag stock <= threshold, notify magazzino/admin (dedup by 6h window)."""
+    thr_doc = await db.tag_thresholds.find_one({"tag": tag})
+    if not thr_doc or thr_doc.get("threshold", 0) <= 0:
+        return
+    in_stock = await db.serials.count_documents({"tipo": tag, "status": "in_stock"})
+    if in_stock > thr_doc["threshold"]:
+        return
+    # Dedup: skip if we already sent a threshold alert for this tag in the last 6 hours
+    from datetime import timedelta
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=6)).isoformat()
+    existing = await db.notifications.find_one(
+        {"kind": "threshold_alert", "note_wr": tag, "created_at": {"$gt": cutoff}}
+    )
+    if existing:
+        return
+    await notify_magazzino(
+        "threshold_alert",
+        f"⚠️ Scorte basse: solo {in_stock} '{tag}' in stock (soglia: {thr_doc['threshold']})",
+        from_user_name=actor_name or "sistema",
+        note_wr=tag,  # reuse field to identify the tag
+    )
 
 
 # ---------- Notifications ----------

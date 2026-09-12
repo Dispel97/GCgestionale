@@ -27,14 +27,31 @@ const LOGO_GC = "https://customer-assets-jai6qajn.emergentagent.net/job_ccf322e9
 const LOGO_OF = "https://customer-assets-jai6qajn.emergentagent.net/job_ccf322e9-af2b-47ac-bdda-c765aa29fe4c/artifacts/hfc42618_Open_Fiber_logo.svg.png";
 
 const composeNote = (n) => {
-  const parts = [
-    n.splitter || "", n.via || "",
-    n.pte_est ?? "PTE-EST",
-    `PFS ${n.n_porta_perm || ""}`, `PTE ${n.porta_pte || ""}`,
-    n.ts ?? "TS", n.tc ?? "TC", n.d ?? "D", n.a ?? "A",
-    n.mono ?? "MONO", n.internal ?? "INT",
-  ].filter((p) => p !== undefined && p !== null && String(p).trim() !== "");
-  return `WR: ${n.wr || ""}\n${(n.cliente || "").toLowerCase()}\n${n.olo || ""}\n${parts.join(" ")}\nCPE: ${n.cpe || ""}\n(ONT/SFP): ${n.ont_sfp || ""}`;
+  const push = (arr, v) => { if (v !== undefined && v !== null && String(v).trim() !== "") arr.push(String(v).trim()); };
+  const parts = [];
+  push(parts, n.splitter); push(parts, n.via); push(parts, n.pte_est);
+  if (n.n_porta_perm && String(n.n_porta_perm).trim()) parts.push(`PFS ${n.n_porta_perm}`);
+  if (n.porta_pte && String(n.porta_pte).trim()) parts.push(`PTE ${n.porta_pte}`);
+  push(parts, n.ts); push(parts, n.tc); push(parts, n.d); push(parts, n.a);
+  if (n.mono_type && String(n.mono_type).trim()) {
+    parts.push(String(n.mono_type).trim());
+  } else {
+    push(parts, n.mono); push(parts, n.internal);
+  }
+  const tech = parts.join(" ");
+  const lines = [`WR: ${n.wr || ""}`];
+  if (n.cliente && n.cliente.trim()) lines.push(n.cliente.trim().toLowerCase());
+  if (n.olo && String(n.olo).trim()) lines.push(String(n.olo).trim());
+  if (tech) lines.push(tech);
+  if (n.cpe && n.cpe.trim()) lines.push(`CPE: ${n.cpe.trim()}`);
+  if (n.ont_sfp && String(n.ont_sfp).trim()) lines.push(`(ONT/SFP): ${n.ont_sfp.trim()}`);
+  for (const m of (n.materials || [])) {
+    const tipo = (m?.tipo || "").trim();
+    const ser = (m?.serial || "").trim();
+    if (tipo && ser) lines.push(`${tipo}: ${ser}`);
+    else if (tipo) lines.push(`${tipo}:`);
+  }
+  return lines.join("\n");
 };
 
 const errorText = (e) => {
@@ -197,7 +214,8 @@ function Header({ onAdmin, showAdminBtn, page, onPageChange, canSwitchPage }) {
                 </button>
               </div>
             )}
-            <div className={`${canSwitchPage ? "" : "ml-auto"} flex gap-2 items-center`}>
+            <div className={`${canSwitchPage ? "" : "ml-auto"} flex gap-2 items-center flex-wrap`}>
+              {(user.role === "user" && page === "notes") && <TeamPicker />}
               {(user.role === "admin" || user.role === "magazzino") && <NotificationsBell />}
               {showAdminBtn && (
                 <button onClick={onAdmin} className="btn-ghost text-xs font-semibold text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-full px-3 py-1.5 inline-flex items-center gap-1" data-testid="btn-admin-panel">
@@ -569,6 +587,7 @@ function PdfUploader({ onParsed }) {
 // ---------- Photo Manager (with camera capture) ----------
 function PhotoManager({ note, onChanged }) {
   const [uploading, setUploading] = useState(false);
+  const [lightbox, setLightbox] = useState(null); // photo object
   const galleryRef = useRef(null);
   const cameraRef = useRef(null);
 
@@ -618,7 +637,9 @@ function PhotoManager({ note, onChanged }) {
           {note.photos.map((p) => (
             <div key={p.id} className="relative group">
               <img src={`${API}/files?path=${encodeURIComponent(p.storage_path)}`} alt={p.filename}
-                className="photo-thumb w-full" loading="lazy" />
+                onClick={() => setLightbox(p)}
+                className="photo-thumb w-full cursor-zoom-in" loading="lazy"
+                data-testid={`photo-thumb-${p.id}`} />
               <button onClick={() => removePhoto(p.id)}
                 className="absolute top-1 right-1 rounded-full bg-black/70 text-white p-1 opacity-0 group-hover:opacity-100 transition"
                 data-testid={`photo-delete-${p.id}`}>
@@ -630,6 +651,16 @@ function PhotoManager({ note, onChanged }) {
       ) : (
         <div className="text-xs text-slate-400 border border-dashed border-slate-200 rounded-lg p-3 text-center">
           Nessuna foto — usa "Scatta foto" per usare la fotocamera o "Galleria" per selezionare
+        </div>
+      )}
+      {lightbox && (
+        <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4" onClick={() => setLightbox(null)} data-testid="photo-lightbox">
+          <button onClick={(e) => { e.stopPropagation(); setLightbox(null); }} className="absolute top-4 right-4 rounded-full bg-white/10 text-white p-2 hover:bg-white/20" data-testid="close-lightbox"><X size={20} /></button>
+          <a href={`${API}/files?path=${encodeURIComponent(lightbox.storage_path)}`} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="absolute bottom-4 right-4 rounded-full bg-white/10 text-white p-2 hover:bg-white/20" title="Apri originale">
+            <Download size={20} />
+          </a>
+          <img src={`${API}/files?path=${encodeURIComponent(lightbox.storage_path)}`} alt={lightbox.filename}
+            className="max-w-full max-h-full object-contain" onClick={(e) => e.stopPropagation()} />
         </div>
       )}
     </div>
@@ -727,6 +758,13 @@ function NoteCard({ note, onChanged, defaultOpen, selected, onToggleSelect, onOp
         pte_est: form.pte_est ?? "PTE-EST",
         ts: form.ts ?? "TS", tc: form.tc ?? "TC", d: form.d ?? "D", a: form.a ?? "A",
         mono: form.mono ?? "MONO", internal: form.internal ?? "INT",
+        mono_type: form.mono_type ?? "",
+        materials: form.materials ?? [],
+        phone_client: form.phone_client ?? "",
+        apparato_password: form.apparato_password ?? "",
+        id_servizio: form.id_servizio ?? "",
+        id_risorsa: form.id_risorsa ?? "",
+        note_date: form.note_date || note.note_date || "",
       };
       if (noteDirty) { payload.note_text = noteDraft; payload.note_text_manual = true; }
       else payload.note_text_manual = false;
@@ -777,16 +815,29 @@ function NoteCard({ note, onChanged, defaultOpen, selected, onToggleSelect, onOp
       reason = "";
     }
     try {
-      await axios.patch(`${API}/notes/${note.id}`, { status: newStatus, suspend_reason: reason });
-      toast.success(newStatus === "sospeso" ? "Nota sospesa (esclusa dalla media)" : "Nota espletata");
+      await axios.patch(`${API}/notes/${note.id}`, { note_type: newStatus, status: newStatus, suspend_reason: reason });
+      const labels = { espletato: "Nota espletata", sospeso: "Nota sospesa (esclusa dalla media)", guasto: "Nota marcata come guasto", migrazione: "Nota marcata come migrazione" };
+      toast.success(labels[newStatus] || "Stato aggiornato");
       onChanged?.();
     } catch (e) { toast.error(errorText(e)); }
   };
 
-  const isSuspended = note.status === "sospeso";
+  const currentType = note.note_type || note.status || "limbo";
+  const isSuspended = currentType === "sospeso";
+  const isFault = currentType === "guasto";
+  const isMigration = currentType === "migrazione";
+  const isDone = currentType === "espletato";
+
+  const sendSuspendMail = () => {
+    const to = window.prompt("Email destinatario per nota sospesa:", "");
+    if (!to) return;
+    const subject = `Nota sospesa - WR ${note.wr} - OLO ${note.olo || ''}`;
+    const body = `Codice OLO: ${note.olo || ''}\nCodice WR: ${note.wr}\nMotivo sospensione: ${note.suspend_reason || ''}\n`;
+    window.location.href = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  };
 
   return (
-    <div className={`bg-white border rounded-2xl card-shadow overflow-hidden stagger-in ${selected ? "border-brand-pink ring-1 ring-brand-pink/40" : isSuspended ? "border-amber-200 bg-amber-50/30" : "border-slate-200"}`}>
+    <div className={`bg-white border rounded-2xl card-shadow overflow-hidden stagger-in ${selected ? "border-brand-pink ring-1 ring-brand-pink/40" : isSuspended ? "border-amber-200 bg-amber-50/30" : isFault ? "border-red-200 bg-red-50/30" : isMigration ? "border-indigo-200 bg-indigo-50/30" : isDone ? "border-emerald-200" : "border-slate-200"}`}>
       <div className="w-full flex items-center gap-3 px-4 sm:px-5 py-4 hover:bg-slate-50 transition">
         <input type="checkbox" checked={!!selected} onChange={() => onToggleSelect?.(note.id)}
           onClick={(e) => e.stopPropagation()} className="h-4 w-4 rounded border-slate-300 accent-pink-600 cursor-pointer"
@@ -797,7 +848,11 @@ function NoteCard({ note, onChanged, defaultOpen, selected, onToggleSelect, onOp
             <div className="text-sm font-semibold text-slate-900 truncate">
               {note.cliente || <span className="text-slate-400 italic">senza cliente</span>}
               {isSuspended && <span className="ml-2 text-[10px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">SOSPESA</span>}
+              {isFault && <span className="ml-2 text-[10px] font-bold text-red-700 bg-red-100 px-1.5 py-0.5 rounded">GUASTO</span>}
+              {isMigration && <span className="ml-2 text-[10px] font-bold text-indigo-700 bg-indigo-100 px-1.5 py-0.5 rounded">MIGRAZIONE</span>}
+              {isDone && <span className="ml-2 text-[10px] font-bold text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded">ESPLETATA</span>}
               {note.synced && <span className="ml-2 text-[10px] font-bold text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded">SYNC ✓</span>}
+              {(note.shared_with?.length > 0) && <span className="ml-2 text-[10px] font-bold text-pink-700 bg-pink-100 px-1.5 py-0.5 rounded" title="Condivisa con la squadra">👥</span>}
             </div>
             <div className="text-xs text-slate-500 truncate">{note.olo || "—"} • {note.indirizzo || note.via || "—"}</div>
           </div>
@@ -811,9 +866,9 @@ function NoteCard({ note, onChanged, defaultOpen, selected, onToggleSelect, onOp
       {open && (
         <div className="px-4 sm:px-5 pb-5 border-t border-slate-100">
           <div className="mt-4 flex flex-wrap items-center gap-2">
-            <div className="inline-flex bg-slate-100 rounded-full p-1" data-testid={`status-group-${note.wr}`}>
+            <div className="inline-flex bg-slate-100 rounded-full p-1 flex-wrap" data-testid={`status-group-${note.wr}`}>
               <button onClick={() => setStatus("espletato")}
-                className={`rounded-full px-3 py-1.5 text-xs font-semibold inline-flex items-center gap-1.5 transition ${!isSuspended ? "bg-emerald-500 text-white shadow" : "text-emerald-700 hover:bg-emerald-50"}`}
+                className={`rounded-full px-3 py-1.5 text-xs font-semibold inline-flex items-center gap-1.5 transition ${isDone ? "bg-emerald-500 text-white shadow" : "text-emerald-700 hover:bg-emerald-50"}`}
                 data-testid={`status-espletato-${note.wr}`}>
                 <CheckCircle2 size={14} /> Espletato
               </button>
@@ -822,7 +877,22 @@ function NoteCard({ note, onChanged, defaultOpen, selected, onToggleSelect, onOp
                 data-testid={`status-sospeso-${note.wr}`}>
                 <PauseCircle size={14} /> Sospeso{isSuspended && note.suspend_reason ? ` · "${note.suspend_reason.substring(0, 18)}${note.suspend_reason.length > 18 ? '…' : ''}"` : ""}
               </button>
+              <button onClick={() => setStatus("guasto")}
+                className={`rounded-full px-3 py-1.5 text-xs font-semibold inline-flex items-center gap-1.5 transition ${isFault ? "bg-red-500 text-white shadow" : "text-red-700 hover:bg-red-50"}`}
+                data-testid={`status-guasto-${note.wr}`}>
+                <Zap size={14} /> Guasto
+              </button>
+              <button onClick={() => setStatus("migrazione")}
+                className={`rounded-full px-3 py-1.5 text-xs font-semibold inline-flex items-center gap-1.5 transition ${isMigration ? "bg-indigo-500 text-white shadow" : "text-indigo-700 hover:bg-indigo-50"}`}
+                data-testid={`status-migrazione-${note.wr}`}>
+                <RefreshCw size={14} /> Migrazione
+              </button>
             </div>
+            {isSuspended && (
+              <button onClick={sendSuspendMail} className="rounded-full px-3 py-2 text-xs font-semibold bg-amber-100 text-amber-800 hover:bg-amber-200 inline-flex items-center gap-2" data-testid={`suspend-mail-${note.wr}`}>
+                <Mail size={14} /> Mail sospensione
+              </button>
+            )}
             <button onClick={copy} className="rounded-full px-3 py-2 text-xs font-semibold bg-slate-900 text-white inline-flex items-center gap-2 hover:bg-slate-800" data-testid={`copy-note-button-${note.wr}`}>
               <Copy size={14} /> Copia nota
             </button>
@@ -854,24 +924,96 @@ function NoteCard({ note, onChanged, defaultOpen, selected, onToggleSelect, onOp
           </div>
 
           {edit && (
-            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3" data-testid={`edit-form-${note.wr}`}>
-              {[
-                { k: "cliente", label: "Cliente (D)" }, { k: "olo", label: "Descrizione OLO" },
-                { k: "splitter", label: "Porta uscita splitter PFS (BA_)" }, { k: "via", label: "VIA (dopo A662_)" },
-                { k: "pte_est", label: "PTE-EST" }, { k: "n_porta_perm", label: "PFS (N. porta perm.)" },
-                { k: "porta_pte", label: "PTE (Porta PTE)" },
-                { k: "ts", label: "TS" }, { k: "tc", label: "TC" }, { k: "d", label: "D" },
-                { k: "a", label: "A" }, { k: "mono", label: "MONO" }, { k: "internal", label: "INT" },
-                { k: "cpe", label: "CPE (seriale modem)" }, { k: "ont_sfp", label: "ONT / SFP" },
-              ].map((f) => (
-                <label key={f.k} className="text-xs font-medium text-slate-600">
-                  {f.label}
-                  <input type="text" value={form[f.k] ?? ""}
-                    onChange={(e) => { setForm({ ...form, [f.k]: e.target.value }); setNoteDirty(false); }}
-                    className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-pink focus:border-transparent"
-                    data-testid={`field-${f.k}-${note.wr}`} />
+            <div className="mt-4 space-y-4" data-testid={`edit-form-${note.wr}`}>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <label className="text-xs font-medium text-slate-600">
+                  Data lavoro
+                  <input type="date" value={form.note_date || ""}
+                    onChange={(e) => { setForm({ ...form, note_date: e.target.value }); setNoteDirty(false); }}
+                    className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-pink"
+                    data-testid={`field-note_date-${note.wr}`} />
                 </label>
-              ))}
+                <label className="text-xs font-medium text-slate-600 sm:col-span-2">
+                  Tipo installazione
+                  <select value={form.mono_type || ""}
+                    onChange={(e) => { setForm({ ...form, mono_type: e.target.value }); setNoteDirty(false); }}
+                    className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-pink"
+                    data-testid={`field-mono_type-${note.wr}`}>
+                    <option value="">— (usa MONO/INT sotto)</option>
+                    <option value="MONO INT">MONO INT</option>
+                    <option value="MONO EST">MONO EST</option>
+                    <option value="SBR">SBR</option>
+                    <option value="VRT STR SBR">VRT STR SBR</option>
+                  </select>
+                </label>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {[
+                  { k: "cliente", label: "Cliente (D)" }, { k: "olo", label: "Descrizione OLO" },
+                  { k: "splitter", label: "Porta uscita splitter PFS (BA_)" }, { k: "via", label: "VIA (dopo A662_)" },
+                  { k: "pte_est", label: "PTE-EST" }, { k: "n_porta_perm", label: "PFS (N. porta perm.)" },
+                  { k: "porta_pte", label: "PTE (Porta PTE)" },
+                  { k: "ts", label: "TS" }, { k: "tc", label: "TC" }, { k: "d", label: "D" },
+                  { k: "a", label: "A" },
+                  ...((!form.mono_type) ? [{ k: "mono", label: "MONO" }, { k: "internal", label: "INT" }] : []),
+                  { k: "cpe", label: "CPE (seriale modem)" }, { k: "ont_sfp", label: "ONT / SFP" },
+                ].map((f) => (
+                  <label key={f.k} className="text-xs font-medium text-slate-600">
+                    {f.label}
+                    <input type="text" value={form[f.k] ?? ""}
+                      onChange={(e) => { setForm({ ...form, [f.k]: e.target.value }); setNoteDirty(false); }}
+                      className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-pink focus:border-transparent"
+                      data-testid={`field-${f.k}-${note.wr}`} />
+                  </label>
+                ))}
+              </div>
+
+              {/* Materiali extra (EXT, ecc.) */}
+              <div className="border-t border-slate-100 pt-3">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-xs font-semibold text-slate-700">Altri materiali</div>
+                  <button type="button" onClick={() => { const m = form.materials || []; setForm({ ...form, materials: [...m, { tipo: "EXT", serial: "" }] }); setNoteDirty(false); }}
+                    className="text-[11px] font-semibold text-brand-pink brand-pink hover:underline inline-flex items-center gap-1" data-testid={`add-material-${note.wr}`}>
+                    + Aggiungi materiale
+                  </button>
+                </div>
+                {(form.materials || []).length === 0 && <div className="text-[11px] text-slate-400 italic">Nessun materiale extra</div>}
+                <div className="space-y-2">
+                  {(form.materials || []).map((m, i) => (
+                    <div key={i} className="flex gap-2 items-center" data-testid={`material-row-${note.wr}-${i}`}>
+                      <input type="text" placeholder="Tipo (es. EXT)" value={m.tipo || ""}
+                        onChange={(e) => { const arr = [...(form.materials || [])]; arr[i] = { ...arr[i], tipo: e.target.value }; setForm({ ...form, materials: arr }); setNoteDirty(false); }}
+                        className="w-24 rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold" />
+                      <input type="text" placeholder="Seriale" value={m.serial || ""}
+                        onChange={(e) => { const arr = [...(form.materials || [])]; arr[i] = { ...arr[i], serial: e.target.value }; setForm({ ...form, materials: arr }); setNoteDirty(false); }}
+                        className="flex-1 rounded-lg border border-slate-200 px-2 py-1 text-xs font-mono" />
+                      <button type="button" onClick={() => { const arr = [...(form.materials || [])]; arr.splice(i, 1); setForm({ ...form, materials: arr }); setNoteDirty(false); }}
+                        className="text-red-500 hover:bg-red-50 rounded-full p-1" data-testid={`remove-material-${note.wr}-${i}`}><X size={14} /></button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Dati di lavoro privati - NON entrano nella nota */}
+              <details className="border-t border-slate-100 pt-3">
+                <summary className="text-xs font-semibold text-slate-700 cursor-pointer">🔒 Dati di lavoro (non finiscono nella nota copiata)</summary>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+                  {[
+                    { k: "phone_client", label: "Telefono cliente" },
+                    { k: "apparato_password", label: "Password apparato" },
+                    { k: "id_servizio", label: "ID SERVIZIO (AAA…)" },
+                    { k: "id_risorsa", label: "ID RISORSA" },
+                  ].map((f) => (
+                    <label key={f.k} className="text-xs font-medium text-slate-600">
+                      {f.label}
+                      <input type="text" value={form[f.k] ?? ""}
+                        onChange={(e) => { setForm({ ...form, [f.k]: e.target.value }); setNoteDirty(false); }}
+                        className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-pink focus:border-transparent"
+                        data-testid={`field-${f.k}-${note.wr}`} />
+                    </label>
+                  ))}
+                </div>
+              </details>
             </div>
           )}
 
@@ -928,133 +1070,195 @@ function downloadFile(name, content, mime) {
 }
 
 function StatsPanel({ notes, onReset }) {
-  // Escludi note sospese dalla media
-  const active = notes.filter((n) => n.status !== "sospeso");
-  const suspended = notes.length - active.length;
-  const byDay = active.reduce((acc, n) => {
-    const k = localDateKey(n.created_at);
-    (acc[k] = acc[k] || []).push(n);
-    return acc;
-  }, {});
-  const dayKeys = Object.keys(byDay).sort();
-  const daysCount = dayKeys.length;
-  const total = active.length;
-  const avg = daysCount > 0 ? total / daysCount : 0;
   const now = new Date();
-  const thisMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  const thisMonth = active.filter((n) => localDateKey(n.created_at).startsWith(thisMonthKey)).length;
-  const thisMonthDays = dayKeys.filter((k) => k.startsWith(thisMonthKey)).length;
-  const monthAvg = thisMonthDays > 0 ? thisMonth / thisMonthDays : 0;
-  const todayKey = localDateKey(now.toISOString());
-  const todayCount = (byDay[todayKey] || []).length;
-  const last7 = dayKeys.slice(-7).reverse();
-  const maxCount = Math.max(1, ...last7.map((k) => byDay[k].length));
+  const todayIso = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString().slice(0, 10);
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+  const [from, setFrom] = useState(monthStart);
+  const [to, setTo] = useState(todayIso);
+  const [stats, setStats] = useState(null);
 
-  // Monthly histogram — 30 days
-  const monthKeys = [];
-  for (let i = 29; i >= 0; i--) {
-    const d = new Date(now); d.setDate(now.getDate() - i);
-    monthKeys.push(localDateKey(d.toISOString()));
-  }
-  const monthMax = Math.max(1, ...monthKeys.map((k) => (byDay[k] || []).length));
+  const fetchStats = useCallback(async () => {
+    try {
+      const r = await axios.get(`${API}/notes/stats`, { params: { from, to } });
+      setStats(r.data);
+    } catch (_) { /* silent */ }
+  }, [from, to]);
 
-  const targetOK = (v) => v >= DAILY_TARGET;
+  useEffect(() => { fetchStats(); }, [fetchStats, notes.length]);
+
+  const totals = stats?.totals || { limbo: 0, espletato: 0, sospeso: 0, guasto: 0, migrazione: 0 };
+  const avgCompleted = stats?.avg_completed_per_working_day || 0;
+  const avgFaults = stats?.avg_faults_per_working_day || 0;
+  const workingDays = stats?.working_days_count || 0;
+  const daily = stats?.daily || [];
+  const maxDaily = Math.max(1, ...daily.map((d) => d.espletato + d.migrazione + d.sospeso + d.guasto));
+  const todayEntry = daily.find((d) => d.date === todayIso);
+  const todayDone = (todayEntry?.espletato || 0) + (todayEntry?.migrazione || 0);
 
   const exportAll = () => {
-    const payload = { exported_at: new Date().toISOString(), total: notes.length, notes };
-    downloadFile(`note-openfiber-${todayKey}.json`, JSON.stringify(payload, null, 2), "application/json");
+    const payload = { exported_at: new Date().toISOString(), from, to, stats, notes };
+    downloadFile(`note-openfiber-${to}.json`, JSON.stringify(payload, null, 2), "application/json");
     toast.success("Esportazione completa avviata");
   };
   const exportOlo = () => {
     const lines = notes.map((n) => n.olo).filter(Boolean);
-    downloadFile(`codici-olo-${todayKey}.txt`, lines.join("\n"), "text/plain;charset=utf-8");
+    downloadFile(`codici-olo-${to}.txt`, lines.join("\n"), "text/plain;charset=utf-8");
     toast.success("Esportazione OLO avviata");
+  };
+  const setThisMonth = () => { setFrom(monthStart); setTo(todayIso); };
+  const setMidToMid = () => {
+    // 15 del mese scorso → 15 di questo mese
+    const t = new Date();
+    const midCur = new Date(t.getFullYear(), t.getMonth(), 15);
+    const midPrev = new Date(t.getFullYear(), t.getMonth() - 1, 15);
+    setFrom(midPrev.toISOString().slice(0, 10));
+    setTo(midCur.toISOString().slice(0, 10));
   };
 
   return (
     <section className="bg-white border border-slate-200 rounded-2xl card-shadow p-4 sm:p-5" data-testid="stats-panel">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Statistiche</div>
-          <h2 className="text-lg sm:text-xl font-display font-bold text-slate-900 mt-0.5">Il tuo mese</h2>
+          <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Report</div>
+          <h2 className="text-lg sm:text-xl font-display font-bold text-slate-900 mt-0.5">Resoconto</h2>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <button onClick={exportOlo} disabled={!total} className="rounded-full px-3 py-2 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-900 inline-flex items-center gap-1 disabled:opacity-40" data-testid="export-olo-btn">
-            <FileText size={14} /> Export OLO
+          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="rounded-full border border-slate-200 px-3 py-1.5 text-xs" data-testid="stats-from" />
+          <span className="text-xs text-slate-400">→</span>
+          <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="rounded-full border border-slate-200 px-3 py-1.5 text-xs" data-testid="stats-to" />
+          <button onClick={setThisMonth} className="rounded-full px-2.5 py-1 text-[11px] font-semibold bg-slate-100 hover:bg-slate-200" data-testid="preset-month">Mese</button>
+          <button onClick={setMidToMid} className="rounded-full px-2.5 py-1 text-[11px] font-semibold bg-slate-100 hover:bg-slate-200" data-testid="preset-15-15">15→15</button>
+          <button onClick={exportOlo} disabled={!notes.length} className="rounded-full px-3 py-1.5 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-900 inline-flex items-center gap-1 disabled:opacity-40" data-testid="export-olo-btn">
+            <FileText size={14} /> OLO
           </button>
-          <button onClick={exportAll} disabled={!total} className="rounded-full px-3 py-2 text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white inline-flex items-center gap-1 disabled:opacity-40" data-testid="export-all-btn">
-            <FileText size={14} /> Export JSON
+          <button onClick={exportAll} disabled={!notes.length} className="rounded-full px-3 py-1.5 text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white inline-flex items-center gap-1 disabled:opacity-40" data-testid="export-all-btn">
+            <FileText size={14} /> JSON
           </button>
-          <button onClick={onReset} disabled={!total} className="rounded-full px-3 py-2 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 inline-flex items-center gap-1 disabled:opacity-40" data-testid="reset-month-btn">
-            <RotateCcw size={14} /> Reset mese
+          <button onClick={onReset} disabled={!notes.length} className="rounded-full px-3 py-1.5 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 inline-flex items-center gap-1 disabled:opacity-40" data-testid="reset-month-btn">
+            <RotateCcw size={14} /> Reset
           </button>
         </div>
       </div>
 
+      {/* Top 4 counters replacing "totale note" */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
-        <div className="rounded-xl bg-slate-50 border border-slate-100 p-3" data-testid="stat-total">
-          <div className="text-[11px] text-slate-500 font-semibold">Totale note</div>
-          <div className="text-2xl font-display font-extrabold text-slate-900 mt-0.5">{total}</div>
+        <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-3" data-testid="stat-espletati">
+          <div className="text-[11px] text-emerald-700 font-semibold uppercase tracking-wide">Impianti espletati</div>
+          <div className="text-2xl font-display font-extrabold text-emerald-600 mt-0.5">{totals.espletato}</div>
         </div>
+        <div className="rounded-xl bg-amber-50 border border-amber-100 p-3" data-testid="stat-sospesi">
+          <div className="text-[11px] text-amber-700 font-semibold uppercase tracking-wide">Impianti sospesi</div>
+          <div className="text-2xl font-display font-extrabold text-amber-600 mt-0.5">{totals.sospeso}</div>
+        </div>
+        <div className="rounded-xl bg-red-50 border border-red-100 p-3" data-testid="stat-guasti">
+          <div className="text-[11px] text-red-700 font-semibold uppercase tracking-wide">Guasti eseguiti</div>
+          <div className="text-2xl font-display font-extrabold text-red-600 mt-0.5">{totals.guasto}</div>
+        </div>
+        <div className="rounded-xl bg-indigo-50 border border-indigo-100 p-3" data-testid="stat-migrazioni">
+          <div className="text-[11px] text-indigo-700 font-semibold uppercase tracking-wide">Migrazioni</div>
+          <div className="text-2xl font-display font-extrabold text-indigo-600 mt-0.5">{totals.migrazione}</div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-3">
         <div className="rounded-xl bg-slate-50 border border-slate-100 p-3" data-testid="stat-today">
-          <div className="text-[11px] text-slate-500 font-semibold">Oggi</div>
-          <div className={`text-2xl font-display font-extrabold mt-0.5 ${targetOK(todayCount) ? "text-emerald-600" : "text-slate-900"}`}>{todayCount}</div>
-          <div className="text-[10px] text-slate-500 mt-0.5">target {DAILY_TARGET}/g</div>
+          <div className="text-[11px] text-slate-500 font-semibold">Oggi (espl.+migr.)</div>
+          <div className="text-2xl font-display font-extrabold text-slate-900 mt-0.5">{todayDone}</div>
         </div>
         <div className="rounded-xl bg-slate-50 border border-slate-100 p-3" data-testid="stat-daily-avg">
-          <div className="text-[11px] text-slate-500 font-semibold">Media giornaliera</div>
-          <div className={`text-2xl font-display font-extrabold mt-0.5 ${targetOK(avg) ? "text-emerald-600" : "text-red-600"}`}>{avg.toFixed(1)}</div>
-          <div className="text-[10px] text-slate-500 mt-0.5">su {daysCount} giorni</div>
+          <div className="text-[11px] text-slate-500 font-semibold">Media/giorno (escl. sabato)</div>
+          <div className="text-2xl font-display font-extrabold text-slate-900 mt-0.5">{avgCompleted.toFixed(1)}</div>
+          <div className="text-[10px] text-slate-500 mt-0.5">su {workingDays} giorni lavorati</div>
         </div>
-        <div className="rounded-xl bg-slate-50 border border-slate-100 p-3" data-testid="stat-month">
-          <div className="text-[11px] text-slate-500 font-semibold">Questo mese</div>
-          <div className="text-2xl font-display font-extrabold text-slate-900 mt-0.5">{thisMonth}</div>
-          <div className="text-[10px] text-slate-500 mt-0.5">media {monthAvg.toFixed(1)}/g</div>
+        <div className="rounded-xl bg-slate-50 border border-slate-100 p-3" data-testid="stat-faults-avg">
+          <div className="text-[11px] text-slate-500 font-semibold">Media guasti/giorno</div>
+          <div className="text-2xl font-display font-extrabold text-red-500 mt-0.5">{avgFaults.toFixed(1)}</div>
+          <div className="text-[10px] text-slate-500 mt-0.5">limbo: {totals.limbo}</div>
         </div>
       </div>
 
-      {last7.length > 0 && (
-        <div className="mt-4">
-          <div className="text-xs font-semibold text-slate-500 mb-2">Ultimi giorni</div>
-          <div className="space-y-1.5" data-testid="days-breakdown">
-            {last7.map((k) => {
-              const c = byDay[k].length;
-              const pct = (c / maxCount) * 100;
-              const ok = targetOK(c);
+      {daily.length > 0 && (
+        <div className="mt-5" data-testid="daily-chart">
+          <div className="text-xs font-semibold text-slate-500 mb-2">Andamento giornaliero</div>
+          <div className="flex items-end gap-[3px] h-24">
+            {daily.map((d) => {
+              const total = d.espletato + d.migrazione + d.sospeso + d.guasto;
+              const h = Math.max(4, (total / maxDaily) * 96);
+              const isToday = d.date === todayIso;
               return (
-                <div key={k} className="flex items-center gap-2 text-xs" data-testid={`day-row-${k}`}>
-                  <div className="w-20 shrink-0 font-mono text-slate-600">{humanDate(k)}</div>
-                  <div className="flex-1 h-6 bg-slate-100 rounded-md overflow-hidden">
-                    <div className={`h-full ${ok ? "bg-emerald-500" : "bg-brand-pink"} transition-all`} style={{ width: `${Math.max(6, pct)}%` }} />
-                  </div>
-                  <div className={`w-8 text-right font-semibold ${ok ? "text-emerald-600" : "text-slate-700"}`}>{c}</div>
+                <div key={d.date} title={`${d.date}: ${total} note${d.is_saturday ? ' (sabato escluso)' : ''}`}
+                  className="flex-1 flex flex-col-reverse rounded overflow-hidden bg-slate-100 relative" style={{ height: 96, minWidth: 6 }}>
+                  {total > 0 && (
+                    <>
+                      {d.espletato > 0 && <div className="w-full bg-emerald-500" style={{ height: `${(d.espletato / total) * h}px` }} />}
+                      {d.migrazione > 0 && <div className="w-full bg-indigo-500" style={{ height: `${(d.migrazione / total) * h}px` }} />}
+                      {d.sospeso > 0 && <div className="w-full bg-amber-400" style={{ height: `${(d.sospeso / total) * h}px` }} />}
+                      {d.guasto > 0 && <div className="w-full bg-red-500" style={{ height: `${(d.guasto / total) * h}px` }} />}
+                    </>
+                  )}
+                  {isToday && <div className="absolute inset-x-0 bottom-0 h-0.5 bg-slate-900" />}
+                  {d.is_saturday && <div className="absolute inset-0 bg-slate-200/40 pointer-events-none" />}
                 </div>
               );
             })}
           </div>
-          <div className="text-[10px] text-slate-400 mt-2">Target: {DAILY_TARGET} note/giorno · verde = raggiunto{suspended > 0 ? ` · ${suspended} nota/e sospese escluse` : ""}</div>
+          <div className="mt-2 flex flex-wrap gap-3 text-[10px] text-slate-600">
+            <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500"></span>espletati</span>
+            <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-indigo-500"></span>migrazioni</span>
+            <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-400"></span>sospesi</span>
+            <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500"></span>guasti</span>
+            <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-slate-300"></span>sabato (escluso)</span>
+          </div>
         </div>
       )}
-
-      {/* Monthly histogram (30 days) */}
-      <div className="mt-5" data-testid="monthly-histogram">
-        <div className="text-xs font-semibold text-slate-500 mb-2">Andamento ultimi 30 giorni</div>
-        <div className="flex items-end gap-[3px] h-24">
-          {monthKeys.map((k) => {
-            const c = (byDay[k] || []).length;
-            const h = Math.max(4, (c / monthMax) * 96);
-            const ok = c >= DAILY_TARGET;
-            const isToday = k === todayKey;
-            return (
-              <div key={k} title={`${humanDate(k)}: ${c} note`} className="flex-1 flex flex-col items-center justify-end" data-testid={`hist-${k}`}>
-                <div className={`w-full rounded-t ${c === 0 ? "bg-slate-100" : ok ? "bg-emerald-500" : "bg-brand-pink"} ${isToday ? "ring-2 ring-slate-900" : ""}`} style={{ height: `${h}px` }} />
-              </div>
-            );
-          })}
-        </div>
-        <div className="text-[10px] text-slate-400 mt-2">Ogni barra = 1 giorno · bordo scuro = oggi</div>
-      </div>
     </section>
+  );
+}
+
+// ---------- Team Picker (compagno di squadra giornaliero) ----------
+function TeamPicker() {
+  const [users, setUsers] = useState([]);
+  const [partner, setPartner] = useState(null);
+  const [partnerId, setPartnerId] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const refresh = useCallback(async () => {
+    try {
+      const r = await axios.get(`${API}/team/today`);
+      setPartner(r.data.partner);
+      setPartnerId(r.data.partner?.id || "");
+    } catch (_) {}
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      try { const r = await axios.get(`${API}/users/approved`); setUsers(r.data || []); } catch (_) {}
+      refresh();
+    })();
+  }, [refresh]);
+
+  const savePartner = async (uid) => {
+    setSaving(true);
+    try {
+      await axios.post(`${API}/team/today`, { partner_user_id: uid || "" });
+      toast.success(uid ? "Compagno di squadra impostato per oggi" : "Compagno rimosso");
+      refresh();
+    } catch (e) { toast.error(errorText(e)); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div className="flex items-center gap-2" data-testid="team-picker">
+      <Users size={14} className="text-slate-500" />
+      <select value={partnerId} onChange={(e) => { setPartnerId(e.target.value); savePartner(e.target.value); }}
+        disabled={saving}
+        className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-pink"
+        data-testid="team-partner-select">
+        <option value="">— Compagno di oggi —</option>
+        {users.map((u) => <option key={u.id} value={u.id}>{u.name || u.email}</option>)}
+      </select>
+      {partner && <span className="text-[10px] font-bold text-pink-700 bg-pink-100 px-1.5 py-0.5 rounded" data-testid="team-partner-badge">👥 {partner.name || partner.email}</span>}
+    </div>
   );
 }
 
@@ -1234,6 +1438,7 @@ function WarehousePage({ onOpenAdmin, showAdminBtn }) {
   const [editingTipoId, setEditingTipoId] = useState(null);
   const [editingTipoVal, setEditingTipoVal] = useState("");
   const scanRef = useRef(null);
+  const [thresholds, setThresholds] = useState([]);
 
   const fetchSerials = useCallback(async () => {
     setLoading(true);
@@ -1247,7 +1452,18 @@ function WarehousePage({ onOpenAdmin, showAdminBtn }) {
   const fetchTags = useCallback(async () => {
     try { const r = await axios.get(`${API}/inventory/tags`); setTags(r.data.tags || []); } catch (_) {}
     try { const r = await axios.get(`${API}/inventory/stats`); setTagStats(r.data || { total: 0, by_tag: [] }); } catch (_) {}
+    try { const r = await axios.get(`${API}/inventory/thresholds`); setThresholds(r.data || []); } catch (_) {}
   }, []);
+
+  const setTagThreshold = async (tag, threshold) => {
+    try {
+      await axios.post(`${API}/inventory/thresholds`, { tag, threshold: parseInt(threshold, 10) || 0 });
+      toast.success(threshold > 0 ? `Soglia "${tag}" = ${threshold}` : `Soglia "${tag}" disattivata`);
+      fetchTags();
+    } catch (e) { toast.error(errorText(e)); }
+  };
+
+  const thresholdFor = (tag) => thresholds.find((t) => t.tag === tag)?.threshold || 0;
 
   useEffect(() => { const t = setTimeout(fetchSerials, 200); return () => clearTimeout(t); }, [fetchSerials]);
   useEffect(() => { axios.get(`${API}/inventory/users`).then((r) => setUsers(r.data || [])).catch(() => {}); }, []);
@@ -1372,26 +1588,46 @@ function WarehousePage({ onOpenAdmin, showAdminBtn }) {
               const asPct = row.total ? (row.assegnato / row.total) * 100 : 0;
               const dwPct = row.total ? (row.scaricato / row.total) * 100 : 0;
               return (
-                <button key={row.tag || "__empty__"} onClick={() => setTipoFilter(row.tag)}
-                  className={`w-full text-left rounded-xl border transition p-3 hover:border-brand-pink hover:bg-pink-50/40 ${tipoFilter === row.tag ? "border-brand-pink bg-pink-50" : "border-slate-200"}`}
-                  data-testid={`tag-stat-${row.tag || "empty"}`} title="Clicca per filtrare la lista">
-                  <div className="flex items-center gap-2">
-                    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ${row.tag ? "bg-pink-100 text-pink-800" : "bg-slate-100 text-slate-400 italic"}`}>
-                      {row.tag || "— senza tag —"}
-                    </span>
-                    <span className="text-lg font-display font-extrabold text-slate-900 ml-auto">{row.total}</span>
-                  </div>
-                  <div className="mt-2 h-2.5 bg-slate-100 rounded-full overflow-hidden relative" style={{ width: `${Math.max(pct, 8)}%`, minWidth: 60 }}>
-                    <div className="absolute inset-y-0 left-0 bg-emerald-400" style={{ width: `${inPct}%` }} />
-                    <div className="absolute inset-y-0 bg-amber-400" style={{ left: `${inPct}%`, width: `${asPct}%` }} />
-                    <div className="absolute inset-y-0 bg-slate-400" style={{ left: `${inPct + asPct}%`, width: `${dwPct}%` }} />
-                  </div>
-                  <div className="flex gap-3 mt-1.5 text-[11px] text-slate-600">
-                    <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-400"></span> {row.in_stock} in stock</span>
-                    <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-400"></span> {row.assegnato} assegnati</span>
-                    <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-slate-400"></span> {row.scaricato} scaricati</span>
-                  </div>
-                </button>
+                <div key={row.tag || "__empty__"}
+                  className={`w-full rounded-xl border transition p-3 ${tipoFilter === row.tag ? "border-brand-pink bg-pink-50" : "border-slate-200 hover:border-brand-pink hover:bg-pink-50/40"}`}
+                  data-testid={`tag-stat-${row.tag || "empty"}`}>
+                  <button onClick={() => setTipoFilter(row.tag)} className="w-full text-left" title="Clicca per filtrare la lista">
+                    <div className="flex items-center gap-2">
+                      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ${row.tag ? "bg-pink-100 text-pink-800" : "bg-slate-100 text-slate-400 italic"}`}>
+                        {row.tag || "— senza tag —"}
+                      </span>
+                      {row.tag && thresholdFor(row.tag) > 0 && row.in_stock <= thresholdFor(row.tag) && (
+                        <span className="text-[10px] font-bold text-red-700 bg-red-100 px-1.5 py-0.5 rounded animate-pulse" data-testid={`threshold-alert-${row.tag}`}>⚠️ SOTTO SOGLIA</span>
+                      )}
+                      <span className="text-lg font-display font-extrabold text-slate-900 ml-auto">{row.total}</span>
+                    </div>
+                    <div className="mt-2 h-2.5 bg-slate-100 rounded-full overflow-hidden relative" style={{ width: `${Math.max(pct, 8)}%`, minWidth: 60 }}>
+                      <div className="absolute inset-y-0 left-0 bg-emerald-400" style={{ width: `${inPct}%` }} />
+                      <div className="absolute inset-y-0 bg-amber-400" style={{ left: `${inPct}%`, width: `${asPct}%` }} />
+                      <div className="absolute inset-y-0 bg-slate-400" style={{ left: `${inPct + asPct}%`, width: `${dwPct}%` }} />
+                    </div>
+                    <div className="flex gap-3 mt-1.5 text-[11px] text-slate-600">
+                      <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-400"></span> {row.in_stock} in stock</span>
+                      <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-400"></span> {row.assegnato} assegnati</span>
+                      <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-slate-400"></span> {row.scaricato} scaricati</span>
+                    </div>
+                  </button>
+                  {row.tag && (
+                    <div className="mt-2 pt-2 border-t border-slate-100 flex items-center gap-2">
+                      <label className="text-[11px] font-semibold text-slate-500 inline-flex items-center gap-1">
+                        <Zap size={10} /> Avvisa se in stock ≤
+                      </label>
+                      <input type="number" min="0" defaultValue={thresholdFor(row.tag) || ""} placeholder="0"
+                        onBlur={(e) => setTagThreshold(row.tag, e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); e.target.blur(); } }}
+                        className="w-16 rounded-full border border-slate-200 px-2 py-0.5 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-brand-pink"
+                        data-testid={`threshold-input-${row.tag}`} />
+                      {thresholdFor(row.tag) > 0 && (
+                        <span className="text-[10px] text-slate-400">soglia attiva: {thresholdFor(row.tag)}</span>
+                      )}
+                    </div>
+                  )}
+                </div>
               );
             })}
           </div>

@@ -1,0 +1,31 @@
+{
+  "summary": "Iteration 13 — full backend + targeted frontend testing for new workflow (limbo/espletato/sospeso/guasto/migrazione), Saturday exclusion, mono_type dropdown, EXT materials, threshold alerts, team, users/approved, multi-serial paste, send-suspend-email, compose_note skip empty fields. Backend: 13/13 pytest in test_iter13.py passed. Frontend: admin login OK; StatsPanel has stat-espletati/sospesi/guasti/migrazioni counters, stats-from/to date pickers, preset-month & preset-15-15 buttons all present and functional. Threshold-input-CPE present in warehouse and setting value triggers backend notification (top-of-page toast '⚠️ Scorte basse: solo 0 CPE in stock (soglia: 100)' confirms end-to-end). Note card (expanded WR 17425036) shows all 4 status buttons (status-espletato/sospeso/guasto/migrazione-{wr}) and clicking migrazione toggles the MIGRAZIONE badge + toast 'Nota marcata come migrazione'. Edit form via edit-toggle-{wr}: field-note_date, field-mono_type (options exactly ['','MONO INT','MONO EST','SBR','VRT STR SBR']), add-material + material-row-{wr}-0 + remove-material-{wr}-0, plus private collapsible fields field-phone_client, field-apparato_password, field-id_servizio, field-id_risorsa all present. photo-lightbox / close-lightbox testids exist in source (not exercised — no photos on tested note). suspend-mail-{wr} button is conditional on isSuspended=true; note stayed migrazione during retry so button was not rendered — testid exists in source at line 892 and backend endpoint returns proper body for sospeso notes (unit-tested).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter13.py",
+    "/app/test_reports/pytest/iter13.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is 1324 lines — getting large, consider splitting into routers/models/services modules.",
+    "notes/stats aggregation loads up to 20000 notes to Python and classifies in-memory — OK for now but for scale prefer a Mongo aggregation pipeline (group by note_date/note_type).",
+    "compose_note correctly skips empty lines and appends materials as 'TIPO: SERIAL'.",
+    "PATCH /api/notes/{id} bidirectionally syncs status<->note_type (verified). Good.",
+    "POST /api/inventory/thresholds threshold=0 deletes; positive value upserts and triggers _check_threshold with 6h dedup — reasonable.",
+    "_check_threshold uses `note_wr` field to store tag name for dedup lookup — a bit of overloading; consider a dedicated `tag` field on notifications for clarity.",
+    "Multi-serial split regex r'[\\s,;]+' handles spaces/commas/semicolons/newlines — matches the requested paste behavior.",
+    "TeamRequest allows empty partner_user_id (clears partnership) and deletes existing team rows for the day (idempotent) — good."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter13.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin: giuseppe97belviso@gmail.com / Mucchetta4!",
+  "seed_data_creation": "Created & cleaned up TESTI13_{ts}_A/B/C serials (tipo TESTI13) via multi-paste test. Created & cleaned up a test note via direct Mongo insert (WRTEST{ts}). Set & removed CPE threshold via API. UI test left WR 17425036 in 'migrazione' state.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All Iter13 features verified: notes/stats totals+is_saturday+working_days_count, PATCH note_type<->status sync (guasto/migrazione/espletato/sospeso), multi-serial paste returns {multi:true,created_count:3}, thresholds CRUD + notification (kind='threshold_alert'), users/approved excludes self, team/today rejects self as partner and returns partner_ids/partner, send-suspend-email 400 when not sospeso and returns {to,subject,body} with OLO+WR+suspend_reason when sospeso, compose_note skips empty fields and adds materials. Frontend testids all confirmed. WR 17425036 currently in 'migrazione' state; may need reset for future tests."
+}

@@ -27,6 +27,33 @@ Web app che automatizza la generazione delle note tecniche OpenFiber a partire d
 - Note status espletato/sospeso (era singolo toggle)
 - File offline standalone HTML per Android
 
+### Iteration 13 (12 Feb 2026) — Fasi 1+2+4 + Threshold
+**Fase 1 — Workflow note**
+- 4 stati distinti: `espletato` / `sospeso` / `guasto` / `migrazione` (+ `limbo` di default). Le 4 categorie hanno pulsanti separati con colori dedicati e badge nella card.
+- **Sabato escluso** dalla media giornaliera (weekday=5 in `working_days_count`).
+- `note_date` (data lavoro) modificabile: input date nell'edit form → puoi inserire pratiche anche in giorni passati.
+- **Dropdown unificato** `mono_type`: `MONO INT` / `MONO EST` / `SBR` / `VRT STR SBR`. Se impostato, sostituisce MONO+INT nella nota.
+- **Campi vuoti non appaiono** più nella nota generata (sia backend che frontend `composeNote`).
+- Report top: 4 counter Espletati / Sospesi / Guasti / Migrazioni (sostituiscono il vecchio "totale note").
+
+**Fase 2 — Campi extra + Report + Foto**
+- Campi privati **non copiati nella nota**: telefono cliente, password apparato, ID SERVIZIO, ID RISORSA (in sezione collapsible).
+- **Materiali multipli**: array `materials: [{tipo, serial}]` con UI add/remove; ogni voce appare in nota come `TIPO: SERIALE`.
+- Endpoint `GET /api/notes/stats?from=&to=` con date range personalizzabile (preset "Mese" e "15→15").
+- Endpoint `POST /api/notes/{id}/send-suspend-email`: pulsante `Mail sospensione` che apre `mailto:` con solo OLO+WR+motivo.
+- **Photo lightbox** fullscreen con download originale.
+
+**Fase 4 — Squadre**
+- Endpoint `GET/POST /api/team/today` (compagno per il giorno) + `GET /api/users/approved`.
+- Nel PDF parse le note create ricevono `shared_with = [partner_id]` in automatico se squadra settata.
+- Il partner vede le note nella sua lista (`$or user_id / shared_with`); foto e modifiche condivise bidirezionalmente.
+- `TeamPicker` in header (visibile solo per role=user) con dropdown compagno.
+
+**Magazzino**
+- **Soglie configurabili** per tag: `POST /api/inventory/thresholds`. Notifica `threshold_alert` automatica quando stock ≤ soglia (dedup 6h). Badge lampeggiante nella card tag e input inline per settare la soglia.
+- **Multi-serial paste**: se in `POST /api/inventory/serials` il campo `serial` contiene spazi/virgole/newline, viene splittato e ogni token creato singolarmente.
+- **OLO auto-associato** al seriale scaricato: quando un tecnico fa sync di una nota, il seriale ottiene `downloaded_olo`, `downloaded_note_wr`, `downloaded_note_id`, ed è visibile nello storico anche se l'etichetta è sbagliata.
+
 ### Iteration 12 (11 Feb 2026)
 - **PWA installabile**: creato `/downloads/pwa/` con `manifest.json`, service worker (`sw.js`), 6 icone PNG (48/96/180/192/512 + maskable). L'offline HTML esistente è wrappato in una PWA con "Aggiungi alla schermata Home" (icona rosa GC Impianti). Zip pronto: `gc-impianti-pwa.zip` (852 KB). Istruzioni PWABuilder.com per convertirlo in APK reale firmato.
 - **Cloudflare R2 storage (fallback trasparente)**: backend aggiornato con `boto3`; se env vars `R2_ENDPOINT/R2_BUCKET/R2_ACCESS_KEY/R2_SECRET_KEY` sono presenti, usa R2 (S3-compatibile); altrimenti fallback su Emergent Object Storage. Nessuna modifica al codice, solo env vars.
