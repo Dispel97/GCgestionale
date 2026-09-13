@@ -807,6 +807,8 @@ async def parse_pdf(file: UploadFile = File(...), user: dict = Depends(get_curre
 
     return {"created_count": len(created_notes),
             "fault_count": len(fault_notes),
+            "duplicate_count": len(duplicate_wrs),
+            "duplicate_wrs": duplicate_wrs,
             "skipped_wr": [n['wr'] for n in fault_notes],  # legacy field name
             "notes": created_notes + fault_notes,
             "pdf_storage_path": pdf_path,
