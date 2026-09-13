@@ -771,7 +771,15 @@ async def parse_pdf(file: UploadFile = File(...), user: dict = Depends(get_curre
     today_iso = datetime.now(timezone.utc).date().isoformat()
     # Detect team partner for shared_with
     partner_ids = await _get_team_partners(user["id"], today_iso)
+    duplicate_wrs = []
     for item in parsed:
+        existing = await db.notes.find_one({
+            "wr": item['wr'],
+            "$or": [{"user_id": user["id"]}, {"shared_with": user["id"]}]
+        })
+        if existing:
+            duplicate_wrs.append(item['wr'])
+            continue
         is_fault = not item['is_numeric']
         note = Note(
             user_id=user["id"],
