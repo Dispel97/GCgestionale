@@ -234,7 +234,7 @@ def parse_openfiber_pdf(pdf_bytes: bytes):
         # Dati privati (non vanno nella nota copiata)
         full_text = d['header'] + "\n" + body
         # Telefono cliente: cerca "Telefono", "Tel.", "Cellulare", "Recapito"
-        m = re.search(r'(?:Telefono|Recapito|Cellulare|Tel\.?)\s*[:\-]?\s*(\+?[\d\s\.\-\/]{6,})', full_text, re.IGNORECASE)
+        m = re.search(r'(?:Telefono(?:\s+Reclamante)?|Recapito|Cellulare|Tel\.?)\s*[:\-]?\s*(\+?[\d\s\.\-\/]{6,})', full_text, re.IGNORECASE)
         phone_client = re.sub(r'[^\d\+]', '', m.group(1)).strip() if m else ''
         # ID SERVIZIO: pattern AAA + numeri (es. AAA12345)
         m = re.search(r'\b(AAA\d{4,})\b', full_text)
