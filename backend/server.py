@@ -243,7 +243,7 @@ def parse_openfiber_pdf(pdf_bytes: bytes):
         m = re.search(r'ID[_ ]?RISORSA[:\s\-]*([A-Z0-9_\-]+)', full_text, re.IGNORECASE)
         id_risorsa = m.group(1) if m else ''
         # Password apparato: formati vari (solo numeri, alfanumerico, o due gruppi separati da trattino)
-        m = re.search(r'(?:PASSWORD[_\s]+APPARATO|PWD[_\s]+APPARATO|Password[_\s]+apparato)\s*[:\-]?\s*([A-Za-z0-9]+(?:[-_][A-Za-z0-9]+)*)', full_text, re.IGNORECASE)
+        m = re.search(r'(?:PASSWORD[_\s]+APPARATO|PWD[_\s]+APPARATO|Password[_\s]+apparato)\s*[:\-]?\s*([A-Za-z0-9]+(?:\s*[-_]\s*[A-Za-z0-9]+)*)', full_text, re.IGNORECASE)
         apparato_password = m.group(1) if m else ''
 
         results.append({
