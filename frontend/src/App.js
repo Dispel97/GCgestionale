@@ -690,10 +690,16 @@ function PdfUploader({ onParsed }) {
     try {
       const fd = new FormData(); fd.append("file", file);
       const res = await axios.post(`${API}/pdf/parse`, fd, { headers: { "Content-Type": "multipart/form-data" } });
-      const { created_count, skipped_wr } = res.data;
-      if (created_count === 0) toast.warning("Nessuna pratica con WR numerico trovata");
-      else toast.success(`${created_count} nota/note create`);
-      if (skipped_wr && skipped_wr.length) toast.message(`WR non numerici saltati: ${skipped_wr.join(", ")}`);
+      const { created_count, skipped_wr, duplicate_count, fault_count } = res.data;
+if (created_count === 0 && fault_count === 0 && duplicate_count > 0) {
+  toast.error("Note già presenti");
+} else if (created_count === 0) {
+  toast.warning("Nessuna pratica con WR numerico trovata");
+} else {
+  toast.success(`${created_count} nota/note create`);
+}
+if (duplicate_count > 0) toast.message(`${duplicate_count} nota/e già presente/i saltate`);
+if (skipped_wr && skipped_wr.length) toast.message(`WR non numerici saltati: ${skipped_wr.join(", ")}`);
       onParsed?.();
     } catch (e) { toast.error(errorText(e)); }
     finally { setLoading(false); if (inputRef.current) inputRef.current.value = ""; }
